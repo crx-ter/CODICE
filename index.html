@@ -9560,8 +9560,17 @@ let _lastMsgTime = 0;
 let _pipelineBypass = false;
 
 async function sendAI(){
-  const key=S().settings.apiKey;
-  if(!key){Toast.error('Configura tu API Key en ⚙ Configuracion');openModal('modal-settings');return;}
+  // Recuperar key: settings > sessionStorage backup > vacío
+  let key = S().settings.apiKey;
+  if(!key){
+    try{ key = sessionStorage.getItem('cdv10_apikey')||''; }catch{}
+    if(key) Store.saveSettings({apiKey:key}); // restaurar al store
+  }
+  if(!key){
+    Toast.error('Configura tu API Key de OpenRouter en ⚙ Configuración');
+    setTimeout(()=>openModal('modal-settings'),300);
+    return;
+  }
   const inp=$('ai-input');const rawMsg=inp.value.trim();
   if(!rawMsg&&!_attachedFiles.length)return;
 
@@ -9764,6 +9773,7 @@ Tipos de bloque: apuntes | quiz | diagrama | codigo | flashcard | ejercicios | r
     return c;
   });
   _aiHistory.push({role:'user',content:historyContent.length===1&&historyContent[0].type==='text'?historyContent[0].text:historyContent});
+  saveConvHistory(); // guardar inmediatamente al enviar (no esperar respuesta de IA)
 
   /* ── SUMMARY MEMORY: comprimir historial viejo cada N mensajes ── */
   _maybeSummarizeHistory();
@@ -11463,6 +11473,30 @@ function _scheduleConvCloudSync(clean) {
   }, 3000); // 3s debounce
 }
 
+function _persistConvs(data){
+  // Intentar guardar en localStorage con múltiples claves como fallback
+  const keys = ['cdv10_convs', 'codice_convs_bk'];
+  for(const k of keys){
+    try{ localStorage.setItem(k, JSON.stringify(data)); }catch(e){ console.warn('[Conv] localStorage fallback',k,e.name); }
+  }
+  // sessionStorage como respaldo extra dentro de la misma sesión
+  try{ sessionStorage.setItem('cdv10_convs', JSON.stringify(data)); }catch{}
+}
+function _loadPersistedConvs(){
+  const keys = ['cdv10_convs', 'codice_convs_bk'];
+  for(const k of keys){
+    try{
+      const d = JSON.parse(localStorage.getItem(k)||'null');
+      if(d && d.length) return d;
+    }catch{}
+  }
+  // Intentar sessionStorage
+  try{
+    const d = JSON.parse(sessionStorage.getItem('cdv10_convs')||'null');
+    if(d && d.length) return d;
+  }catch{}
+  return [];
+}
 function saveConvHistory(){
   if(!_aiHistory.length)return;
   const firstUser=_aiHistory.find(m=>m.role==='user');
@@ -11485,24 +11519,24 @@ function saveConvHistory(){
     const serialized=JSON.stringify(clean);
     if(serialized.length>800000){
       /* Too big — keep only last 10 conversations */
-      localStorage.setItem('cdv10_convs',JSON.stringify(clean.slice(0,10)));
+      _persistConvs(clean.slice(0,10));
       _scheduleConvCloudSync(clean.slice(0,10));
     } else {
-      localStorage.setItem('cdv10_convs',serialized);
+      _persistConvs(clean);
       _scheduleConvCloudSync(clean);
     }
   }catch(e){
     if(e.name==='QuotaExceededError'){
       const trimmed=Object.values(_aiConvStore).sort((a,b)=>b.savedAt-a.savedAt).slice(0,5);
       _aiConvStore={};trimmed.forEach(c=>{_aiConvStore[c.id]=c;});
-      try{localStorage.setItem('cdv10_convs',JSON.stringify(trimmed));}catch{}
+      _persistConvs(trimmed);
       _scheduleConvCloudSync(trimmed);
     }
   }
 }
 async function loadConvHistory(){
   /* 1. Cargar desde localStorage (instantáneo) */
-  try{const d=JSON.parse(localStorage.getItem('cdv10_convs')||'[]');d.forEach(c=>{_aiConvStore[c.id]=c;});}catch{}
+  try{const d=_loadPersistedConvs();d.forEach(c=>{_aiConvStore[c.id]=c;});}catch{}
   /* 2. Si hay usuario, intentar cargar desde Firestore (puede ser más completo) */
   const uid = window.__codiceUser?.uid;
   if(!uid) return;
@@ -13396,6 +13430,8 @@ function saveSettings(){
   const keyVal = $('cfg-key').value.trim();
   const modeVal = $('cfg-ai-mode').value;
   Store.saveSettings({apiKey:keyVal, aiMode:modeVal});
+  // Backup de la key en sessionStorage para sobrevivir recargas del WebView
+  try{ if(keyVal) sessionStorage.setItem('cdv10_apikey', keyVal); }catch{}
   // Sync settings to Firestore if user is logged in
   if(typeof FirestoreSync !== 'undefined' && window.__codiceUser){
     try{ FirestoreSync.markDirty(S()); }catch(e){}
@@ -13413,7 +13449,7 @@ async function testApiConnection(){
     const res=await fetch('https://openrouter.ai/api/v1/chat/completions',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+key,'HTTP-Referer':'https://codice.app','X-Title':'CODICE'},
-      body:JSON.stringify({model:'openrouter/free',messages:[{role:'user',content:'Reply with just the word: OK'}],max_tokens:5,stream:false})
+      body:JSON.stringify({model:'meta-llama/llama-3.2-3b-instruct:free',messages:[{role:'user',content:'Reply with just the word: OK'}],max_tokens:5,stream:false})
     });
     if(res.ok){
       const d=await res.json();
@@ -15823,16 +15859,26 @@ function _mapUser(fbUser) {
 // ── API pública ───────────────────────────────────────────────
 const Auth = {
 
-  /** Login con Google — siempre redirect (más compatible que popup) */
+  /** Login con Google — popup primero (evita el problema de 2FA/redirect en Android) */
   async loginWithGoogle() {
-    // Usamos redirect en todos los casos: no necesita apis.google.com/js/api.js
-    // y funciona en Brave, Firefox, Safari, mobile y desktop por igual.
-    // El popup requiere inyectar scripts de apis.google.com que Brave bloquea.
+    // En Android WebView, signInWithRedirect causa problemas: redirige al navegador
+    // del sistema, pide 2FA siempre, y no permite cambiar de cuenta.
+    // Usamos signInWithPopup que abre un diálogo nativo dentro de la app.
     try {
-      await signInWithRedirect(_auth, _provider);
-      return { ok: true, redirect: true };
+      const result = await signInWithPopup(_auth, _provider);
+      return { ok: true, user: _mapUser(result.user) };
     } catch (e) {
-      console.error("[Auth] loginWithGoogle redirect:", e);
+      // Si popup falla (bloqueado), intentar redirect como último recurso
+      if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user') {
+        try {
+          await signInWithRedirect(_auth, _provider);
+          return { ok: true, redirect: true };
+        } catch (e2) {
+          console.error("[Auth] loginWithGoogle redirect fallback:", e2);
+          return { ok: false, error: e2.message };
+        }
+      }
+      console.error("[Auth] loginWithGoogle popup:", e);
       return { ok: false, error: e.message };
     }
   },

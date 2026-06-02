@@ -76,6 +76,9 @@ jobs:
           # Internet (siempre necesario para llamadas a Firebase/OpenRouter)
           grep -q 'INTERNET' "$MANIFEST" || \
             sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <application|' "$MANIFEST"
+          # Micrófono (para voz/speech recognition)
+          grep -q 'RECORD_AUDIO' "$MANIFEST" || \
+            sed -i 's|<application|<uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <application|' "$MANIFEST"
           # Media (para subir imágenes y PDFs)
           grep -q 'READ_MEDIA_IMAGES' "$MANIFEST" || \
             sed -i 's|<application|<uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>\n    <application|' "$MANIFEST"

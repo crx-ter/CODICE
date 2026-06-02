@@ -8754,29 +8754,29 @@ ANTES de generar CUALQUIER respuesta, ejecuta este protocolo interno completo:
 
 /* ── POOL DE MODELOS SUPREMOS 2025 ── */
 const MODEL_POOL = {
-  NEMOTRON_SUPER:  'nvidia/nemotron-3-super-120b-a12b:free',
-  QWEN_CODER:      'qwen/qwen3-coder:free',
-  NEMOTRON_VL:     'nvidia/nemotron-nano-12b-v2-vl:free',
-  DEEPSEEK_FLASH:  'deepseek/deepseek-v4-flash:free',
-  MINIMAX:         'minimax/minimax-m2.5:free',
-  GEMMA4_31B:      'google/gemma-4-31b-it:free',
+  NEMOTRON_SUPER:  'nvidia/llama-3.1-nemotron-ultra-253b-v1:free',
+  QWEN_CODER:      'qwen/qwen3-235b-a22b:free',
+  NEMOTRON_VL:     'nvidia/llama-3.1-nemotron-nano-8b-v1:free',
+  DEEPSEEK_FLASH:  'deepseek/deepseek-chat-v3-0324:free',
+  MINIMAX:         'mistralai/mistral-small-3.2-24b-instruct:free',
+  GEMMA4_31B:      'google/gemma-3-27b-it:free',
   LLAMA33_70B:     'meta-llama/llama-3.3-70b-instruct:free',
-  TRINITY_THINK:   'arcee-ai/trinity-large-thinking:free',
-  QWEN3_80B:       'qwen/qwen3-next-80b-a3b-instruct:free',
-  NEMOTRON_REASON: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
-  GEMMA4_26B:      'google/gemma-4-26b-a4b-it:free',
-  RING_2_6:        'inclusionai/ring-2.6-1t:free',
-  LAGUNA_M:        'poolside/laguna-m.1:free',
-  GPT_OSS_120B:    'openai/gpt-oss-120b:free',
-  NEMOTRON_NANO:   'nvidia/nemotron-3-nano-30b-a3b:free',
+  TRINITY_THINK:   'deepseek/deepseek-r1:free',
+  QWEN3_80B:       'qwen/qwen3-32b:free',
+  NEMOTRON_REASON: 'nvidia/llama-3.3-nemotron-super-49b-v1:free',
+  GEMMA4_26B:      'google/gemma-3-12b-it:free',
+  RING_2_6:        'mistralai/mistral-7b-instruct:free',
+  LAGUNA_M:        'meta-llama/llama-3.2-11b-vision-instruct:free',
+  GPT_OSS_120B:    'microsoft/phi-4:free',
+  NEMOTRON_NANO:   'nvidia/llama-3.1-nemotron-nano-8b-v1:free',
   LLAMA32_3B:      'meta-llama/llama-3.2-3b-instruct:free',
-  GLM_AIR:         'z-ai/glm-4.5-air:free',
-  LFM_THINK:       'liquid/lfm-2.5-1.2b-thinking:free',
+  GLM_AIR:         'mistralai/mistral-nemo:free',
+  LFM_THINK:       'google/gemma-3-4b-it:free',
   HERMES_405B:     'nousresearch/hermes-3-llama-3.1-405b:free',
-  NEMOTRON_NANO9:  'nvidia/nemotron-nano-9b-v2:free',
-  LAGUNA_XS:       'poolside/laguna-xs.2:free',
-  GPT_OSS_20B:     'openai/gpt-oss-20b:free',
-  COBUDDY:         'baidu/cobuddy:free',
+  NEMOTRON_NANO9:  'meta-llama/llama-3.1-8b-instruct:free',
+  LAGUNA_XS:       'qwen/qwen3-8b:free',
+  GPT_OSS_20B:     'microsoft/phi-4-mini-instruct:free',
+  COBUDDY:         'google/gemma-3n-e4b-it:free',
 };
 
 const AGENTS = {
@@ -9882,7 +9882,8 @@ Tipos de bloque: apuntes | quiz | diagrama | codigo | flashcard | ejercicios | r
     /* onChunk */ (delta, accumulated) => {
       if (!_firstToken) {
         _firstToken = true;
-        if(content_div.querySelector('.ai-thinking-dots')) content_div.innerHTML='';
+        // Limpiar indicador "pensando" — compatible con Android WebView
+        while (content_div.firstChild) content_div.removeChild(content_div.firstChild);
         setAIStatus('');
       }
       fullText = accumulated;
@@ -14589,6 +14590,20 @@ function init(){
 
       function startListening() {
         if (isListening) { stopListening(); return; }
+        // Solicitar permiso de micrófono explícitamente en Android
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(() => _doStartListening())
+            .catch(err => {
+              console.warn('[Mic] getUserMedia denied:', err);
+              Toast.error('Permiso de micrófono denegado. Actívalo en Ajustes del teléfono.');
+            });
+        } else {
+          _doStartListening();
+        }
+      }
+
+      function _doStartListening() {
         recognition = new SR();
         recognition.lang = 'es-MX';
         recognition.continuous = false;
@@ -14635,7 +14650,7 @@ function init(){
         const inputEl = document.getElementById('ai-input');
         if (inputEl) inputEl.dataset.micBase = inputEl.value;
         try { recognition.start(); } catch(err) { console.warn('[Mic] start failed:', err); stopListening(); }
-      }
+      } // end _doStartListening
 
       function stopListening() {
         isListening = false;

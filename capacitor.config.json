@@ -1,0 +1,56 @@
+{
+  "appId": "com.codice.app",
+  "appName": "Códice",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": false,
+    "allowNavigation": [
+      "accounts.google.com",
+      "*.google.com",
+      "*.googleapis.com",
+      "*.firebaseapp.com",
+      "*.firebaseio.com",
+      "codice-4d18f.web.app",
+      "openrouter.ai",
+      "*.openrouter.ai",
+      "fonts.googleapis.com",
+      "fonts.gstatic.com",
+      "cdn.jsdelivr.net"
+    ]
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false,
+    "backgroundColor": "#08080e",
+    "overrideUserAgent": "Mozilla/5.0 (Linux; Android 14; Códice) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+    "hideStatusBar": false,
+    "keepRunning": true,
+    "useLegacyBridge": false,
+    "initialFocus": true,
+    "minWebViewVersion": 60
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 0,
+      "launchAutoHide": true,
+      "backgroundColor": "#08080e",
+      "androidSplashResourceName": "splash",
+      "androidScaleType": "CENTER_CROP",
+      "showSpinner": false,
+      "splashFullScreen": true,
+      "splashImmersive": true
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#08080e",
+      "overlaysWebView": false
+    },
+    "Keyboard": {
+      "resize": "body",
+      "style": "DARK",
+      "resizeOnFullScreen": true
+    }
+  }
+}

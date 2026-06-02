@@ -1,0 +1,21 @@
+{
+  "name": "codice",
+  "version": "1.0.0",
+  "description": "Sistema de estudio con IA de ultra-precisión.",
+  "main": "firestore-social.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/crx-ter/CODICE.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/crx-ter/CODICE/issues"
+  },
+  "homepage": "https://github.com/crx-ter/CODICE#readme"
+}

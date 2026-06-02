@@ -1,0 +1,148 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ──────────────────────────────────────────────────
+    function isAuth()  { return request.auth != null; }
+    function isOwner(userId) { return request.auth.uid == userId; }
+    function isMine(field) { return request.resource.data[field] == request.auth.uid; }
+
+    // [CRITICAL-1] Defensa en profundidad: el cliente ya filtra estos campos,
+    // pero las reglas de Firestore son la última línea de defensa.
+    // Si por algún bug el cliente intentara subir una apiKey, Firestore la rechaza.
+    function hasNoSensitiveKeys() {
+      let incomingKeys = request.resource.data.keys();
+      return !('apiKey'       in incomingKeys ||
+               'openaiKey'    in incomingKeys ||
+               'anthropicKey' in incomingKeys ||
+               'secretKey'    in incomingKeys ||
+               'token'        in incomingKeys);
+    }
+
+    // Validación de strings: no vacíos y no exageradamente largos
+    function isValidString(val, maxLen) {
+      return val is string && val.size() >= 1 && val.size() <= maxLen;
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // USUARIOS — datos privados completos
+    // Estructura: users/{uid}/state/main   ← módulos, clases, ajustes
+    //             users/{uid}/chats/{chatId} ← historial de chats IA
+    // ══════════════════════════════════════════════════════════════
+    match /users/{userId} {
+      allow read, write: if isAuth() && isOwner(userId);
+
+      match /{document=**} {
+        allow read, write: if isAuth()
+                           && request.auth.uid == userId
+                           && hasNoSensitiveKeys();
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // PERFILES PÚBLICOS — para búsqueda de amigos
+    // Solo el dueño escribe, cualquier autenticado lee
+    // ══════════════════════════════════════════════════════════════
+    match /public_profiles/{userId} {
+      allow read:  if isAuth();
+      allow write: if isAuth() && request.auth.uid == userId;
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // AMIGOS — lista bidireccional real en Firestore
+    // Estructura: friends/{uid_a}_{uid_b}/ — uid_a < uid_b siempre
+    // ══════════════════════════════════════════════════════════════
+    match /friends/{friendshipId} {
+      allow read: if isAuth() &&
+        (resource.data.uid_a == request.auth.uid ||
+         resource.data.uid_b == request.auth.uid);
+
+      // Crear: solicitante debe ser uid_a o uid_b, status=pending,
+      //        y los IDs deben estar ordenados lexicográficamente (evita duplicados)
+      allow create: if isAuth() &&
+        (request.resource.data.uid_a == request.auth.uid ||
+         request.resource.data.uid_b == request.auth.uid) &&
+        request.resource.data.status  == 'pending'        &&
+        request.resource.data.uid_a   <  request.resource.data.uid_b;
+
+      // Actualizar: solo aceptar/rechazar — no se pueden cambiar los participantes
+      allow update: if isAuth() &&
+        (resource.data.uid_a == request.auth.uid ||
+         resource.data.uid_b == request.auth.uid) &&
+        request.resource.data.uid_a == resource.data.uid_a &&
+        request.resource.data.uid_b == resource.data.uid_b;
+
+      allow delete: if isAuth() &&
+        (resource.data.uid_a == request.auth.uid ||
+         resource.data.uid_b == request.auth.uid);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // MENSAJES DIRECTOS entre usuarios
+    // ══════════════════════════════════════════════════════════════
+    match /messages/{messageId} {
+      allow read: if isAuth() &&
+        (resource.data.toUid   == request.auth.uid ||
+         resource.data.fromUid == request.auth.uid);
+
+      allow create: if isAuth() &&
+        request.resource.data.fromUid == request.auth.uid &&
+        isValidString(request.resource.data.text, 1000);
+
+      allow delete: if isAuth() &&
+        (resource.data.toUid   == request.auth.uid ||
+         resource.data.fromUid == request.auth.uid);
+
+      allow update: if false;
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // MÓDULOS COMPARTIDOS / EXPLORAR
+    // ══════════════════════════════════════════════════════════════
+    match /shared_modules/{sharedModuleId} {
+      allow list, get: if isAuth() && resource.data.isPublic == true;
+      allow get:       if isAuth() && resource.data.ownerId == request.auth.uid;
+
+      allow create: if isAuth() &&
+        isMine('ownerId') &&
+        isValidString(request.resource.data.name, 120);
+
+      allow update, delete: if isAuth() &&
+        resource.data.ownerId == request.auth.uid;
+
+      match /content/{documentId} {
+        allow read: if isAuth() && (
+          get(/databases/$(database)/documents/shared_modules/$(sharedModuleId)).data.isPublic == true ||
+          get(/databases/$(database)/documents/shared_modules/$(sharedModuleId)).data.ownerId == request.auth.uid
+        );
+        allow write: if isAuth() &&
+          get(/databases/$(database)/documents/shared_modules/$(sharedModuleId)).data.ownerId == request.auth.uid;
+      }
+
+      match /forks/{uid} {
+        allow read:  if isAuth();
+        allow write: if isAuth() && request.auth.uid == uid;
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // NOTIFICACIONES
+    //
+    // [FIX HIGH-4] El create desde el cliente está DESACTIVADO.
+    // Las notificaciones deben crearse desde Cloud Functions (server-side)
+    // usando el Admin SDK, que bypasea estas reglas correctamente.
+    //
+    // Para re-activar temporalmente en desarrollo local:
+    //   allow create: if isAuth() && request.resource.data.fromUid == request.auth.uid;
+    // ══════════════════════════════════════════════════════════════
+    match /notifications/{notifId} {
+      allow read, delete: if isAuth() &&
+        resource.data.toUid == request.auth.uid;
+
+      // [HIGH-4] Desactivado del cliente — crear solo desde Cloud Functions (Admin SDK)
+      allow create: if false;
+      allow update: if false;
+    }
+
+  }
+}

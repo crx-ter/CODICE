@@ -1,0 +1,7 @@
+android/
+node_modules/
+www/
+.firebase/
+*.log
+codice-patch-v2.js
+.capacitor/

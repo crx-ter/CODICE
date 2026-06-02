@@ -5840,57 +5840,8 @@ console.log(perro.hablar());`,
     function incrementar() { document.getElementById('contador').textContent = ++n; }
     function resetear() { n = 0; document.getElementById('contador').textContent = 0; }
   <\/script>
-<script>
-/* ══ CAPACITOR NATIVE INIT ══ */
-(function initCapacitor(){
-  if(typeof window.Capacitor === 'undefined') return;
-  const { StatusBar, SplashScreen, Haptics, Keyboard } = window.Capacitor.Plugins || {};
-
-  // Status bar — dark overlay, transparent background
-  if(StatusBar){
-    StatusBar.setStyle({style:'DARK'}).catch(()=>{});
-    StatusBar.setBackgroundColor({color:'#08080e'}).catch(()=>{});
-    StatusBar.setOverlaysWebView({overlay:false}).catch(()=>{});
-  }
-
-  // Hide splash once DOM is ready
-  if(SplashScreen){
-    SplashScreen.hide({fadeOutDuration:200}).catch(()=>{});
-  }
-
-  // Keyboard — push content up, don't resize body
-  if(Keyboard){
-    Keyboard.setAccessoryBarVisible({isVisible:false}).catch(()=>{});
-    Keyboard.setScroll({isDisabled:false}).catch(()=>{});
-    window.addEventListener('keyboardWillShow', e => {
-      document.body.style.paddingBottom = (e.keyboardHeight||0)+'px';
-    });
-    window.addEventListener('keyboardWillHide', () => {
-      document.body.style.paddingBottom = '';
-    });
-  }
-
-  // Hardware back button — close modals/AI panel first
-  document.addEventListener('backbutton', function(e){
-    e.preventDefault();
-    // Close AI panel if open
-    const aiPanel = document.getElementById('ai-panel');
-    if(aiPanel && !aiPanel.classList.contains('hidden')){
-      if(typeof closeAI === 'function') closeAI(); return;
-    }
-    // Close any open modal
-    const openModal = document.querySelector('.modal.open, .modal-overlay:not(.hidden)');
-    if(openModal){ openModal.classList.add('hidden'); return; }
-    // Close sidebar on mobile
-    const sb = document.querySelector('.sidebar:not(.collapsed)');
-    if(sb && window.innerWidth < 768){ if(typeof toggleSidebar==='function') toggleSidebar(); return; }
-  }, false);
-})();
-</script>
 </body>
-</html>`,
-
-    python:`# Python — simulado (output en consola)
+</html>`,    python:`# Python — simulado (output en consola)
 import math
 
 def fibonacci(n):
@@ -18128,5 +18079,53 @@ document.addEventListener('DOMContentLoaded', () => {
 <script type="module" src="js/init.js"></script>
 <script src="firestore-social.js" onerror="console.warn('[CÓDICE] firestore-social.js no disponible')"></script>
 
+
+<script>
+/* ══ CAPACITOR NATIVE INIT ══ */
+(function initCapacitor(){
+  if(typeof window.Capacitor === 'undefined') return;
+  const { StatusBar, SplashScreen, Haptics, Keyboard } = window.Capacitor.Plugins || {};
+
+  // Status bar — dark overlay, transparent background
+  if(StatusBar){
+    StatusBar.setStyle({style:'DARK'}).catch(()=>{});
+    StatusBar.setBackgroundColor({color:'#08080e'}).catch(()=>{});
+    StatusBar.setOverlaysWebView({overlay:false}).catch(()=>{});
+  }
+
+  // Hide splash once DOM is ready
+  if(SplashScreen){
+    SplashScreen.hide({fadeOutDuration:200}).catch(()=>{});
+  }
+
+  // Keyboard — push content up, don't resize body
+  if(Keyboard){
+    Keyboard.setAccessoryBarVisible({isVisible:false}).catch(()=>{});
+    Keyboard.setScroll({isDisabled:false}).catch(()=>{});
+    window.addEventListener('keyboardWillShow', e => {
+      document.body.style.paddingBottom = (e.keyboardHeight||0)+'px';
+    });
+    window.addEventListener('keyboardWillHide', () => {
+      document.body.style.paddingBottom = '';
+    });
+  }
+
+  // Hardware back button — close modals/AI panel first
+  document.addEventListener('backbutton', function(e){
+    e.preventDefault();
+    // Close AI panel if open
+    const aiPanel = document.getElementById('ai-panel');
+    if(aiPanel && !aiPanel.classList.contains('hidden')){
+      if(typeof closeAI === 'function') closeAI(); return;
+    }
+    // Close any open modal
+    const openModal = document.querySelector('.modal.open, .modal-overlay:not(\.hidden)');
+    if(openModal){ openModal.classList.add('hidden'); return; }
+    // Close sidebar on mobile
+    const sb = document.querySelector('.sidebar:not(\.collapsed)');
+    if(sb && window.innerWidth < 768){ if(typeof toggleSidebar==='function') toggleSidebar(); return; }
+  }, false);
+})();
+</script>
 </body>
 </html>

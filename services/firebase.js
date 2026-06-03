@@ -19,6 +19,7 @@ const firebaseConfig = {
 // ── Imports desde CDN ─────────────────────────────────────────
 import { initializeApp }          from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup,
+         signInWithRedirect, getRedirectResult,
          signOut, onAuthStateChanged,
          setPersistence, browserLocalPersistence }
                                    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
@@ -46,4 +47,5 @@ window.FIREBASE_STOR = _stor;
 // Re-exportar helpers de Firestore y Storage para que auth.js los use
 export { _app, _auth, _db, _stor,
          doc, setDoc, getDoc, collection, onSnapshot, serverTimestamp,
-         GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged };
+         GoogleAuthProvider, signInWithPopup, signInWithRedirect,
+         getRedirectResult, signOut, onAuthStateChanged };

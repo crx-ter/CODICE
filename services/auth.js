@@ -107,17 +107,12 @@ function _mapUser(fbUser) {
 // ── API pública ───────────────────────────────────────────────
 const Auth = {
 
-  /** Login con Google vía popup (para desarrollo local) */
+  /** Login con Google vía redirect (Custom Tabs — evita disallowed_useragent en APK) */
   async loginWithGoogle() {
     try {
-      const result = await signInWithPopup(_auth, _provider);
-      return { ok: true, user: _mapUser(result.user) };
+      await signInWithRedirect(_auth, _provider);
+      return { ok: true };
     } catch (e) {
-      // El usuario cerró el popup — no es un error crítico
-      if (e.code === "auth/popup-closed-by-user" ||
-          e.code === "auth/cancelled-popup-request") {
-        return { ok: false, cancelled: true };
-      }
       console.error("[Auth] loginWithGoogle:", e);
       return { ok: false, error: e.message };
     }

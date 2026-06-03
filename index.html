@@ -14773,6 +14773,9 @@ function init(){
         if (!hasUser) {
           if(typeof LoginScreen !== 'undefined') { LoginScreen.show(); }
         } else {
+          // Ocultar inmediatamente sin animación para evitar flash de contenido
+          const _lsEl = document.getElementById('login-screen');
+          if(_lsEl){ _lsEl.style.display='none'; _lsEl.style.opacity=''; }
           if(typeof LoginScreen !== 'undefined') { LoginScreen.hide(); }
           const u = (_bm && _bm.user) || window.__codiceUser
                     || (window.FIREBASE_AUTH && window.FIREBASE_AUTH.currentUser);
@@ -16543,6 +16546,15 @@ function _startGalaxyCanvas(canvas){
 /* ── HTML del Login Screen ── */
 const _HTML = `
 <div id="login-screen" style="position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;font-family:var(--fb);overflow:hidden;background:#04040e">
+  <script>
+    // Ocultar login inmediatamente si ya hay sesión — evita flash de contenido
+    try {
+      const _fbAuth = JSON.parse(localStorage.getItem('firebase:authUser:AIzaSyDLQ3dHp-YV-vObebnEXEssb50UDeheexM:[DEFAULT]') || 'null');
+      if(_fbAuth && _fbAuth.uid) {
+        document.getElementById('login-screen').style.display = 'none';
+      }
+    } catch(e) {}
+  </script>
   <canvas id="login-galaxy-canvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></canvas>
 
   <!-- Overlay morado galaxia -->
@@ -17044,7 +17056,28 @@ async function _lsHandleRegister(){
   const _loadMsg = document.getElementById('ls-load-msg');
   if(_loadMsg) _loadMsg.textContent='Creando tu cuenta…';
   try {
-    const { createUserWithEmailAndPassword, sendEmailVerification } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+    const { createUserWithEmailAndPassword, sendEmailVerification,
+            fetchSignInMethodsForEmail, EmailAuthProvider, linkWithCredential } =
+      await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+
+    // Verificar si el email ya existe
+    let methods = [];
+    try { methods = await fetchSignInMethodsForEmail(_auth, email); } catch(e){}
+
+    if(methods.includes('google.com') && !methods.includes('password')){
+      // Cuenta Google existente — vincular email/password
+      if(_auth.currentUser){
+        const cred = EmailAuthProvider.credential(email, pass);
+        await linkWithCredential(_auth.currentUser, cred);
+        _lsShowToast('¡Contraseña añadida a tu cuenta! Ya puedes iniciar sesión con email.');
+        _lsPhase='emailLogin'; _lsRender(); return;
+      } else {
+        _lsPhase='register'; _lsRender();
+        _lsShowToast('Esa cuenta usa Google. Inicia sesión con Google primero, luego podrás añadir contraseña.');
+        return;
+      }
+    }
+
     const cred = await createUserWithEmailAndPassword(_auth, email, pass);
     await sendEmailVerification(cred.user);
     _lsPendingEmail = email;

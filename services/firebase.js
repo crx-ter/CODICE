@@ -20,6 +20,8 @@ const firebaseConfig = {
 import { initializeApp }          from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup,
          signInWithRedirect, getRedirectResult,
+         createUserWithEmailAndPassword, signInWithEmailAndPassword,
+         sendEmailVerification, sendPasswordResetEmail, reload,
          signOut, onAuthStateChanged,
          setPersistence, browserLocalPersistence }
                                    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
@@ -48,4 +50,6 @@ window.FIREBASE_STOR = _stor;
 export { _app, _auth, _db, _stor,
          doc, setDoc, getDoc, collection, onSnapshot, serverTimestamp,
          GoogleAuthProvider, signInWithPopup, signInWithRedirect,
-         getRedirectResult, signOut, onAuthStateChanged };
+         getRedirectResult, signOut, onAuthStateChanged,
+         createUserWithEmailAndPassword, signInWithEmailAndPassword,
+         sendEmailVerification, sendPasswordResetEmail, reload };

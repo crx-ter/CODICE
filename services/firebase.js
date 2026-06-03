@@ -8,7 +8,7 @@
 // ── Configuración ──────────────────────────────────────────────
 const firebaseConfig = {
   apiKey: "AIzaSyDLQ3dHp-YV-vObebnEXEssb50UDeheexM",
-  authDomain: "codice-4d18f.web.app",
+  authDomain: "codice-4d18f.firebaseapp.com",
   projectId: "codice-4d18f",
   storageBucket: "codice-4d18f.firebasestorage.app",
   messagingSenderId: "332267079461",

@@ -14752,6 +14752,14 @@ function init(){
   setTimeout(() => {
     /* Hide splash first */
     try { _hideSplash(); } catch(e) {}
+    /* Cubrir con login de inmediato si no hay usuario — evita flash de contenido */
+    try {
+      const _hasUserEarly = (window.__codiceUser != null)
+        || (window.FIREBASE_AUTH && window.FIREBASE_AUTH.currentUser != null);
+      if (!_hasUserEarly && typeof LoginScreen !== 'undefined') {
+        LoginScreen.show();
+      }
+    } catch(e) {}
 
     /* LoginScreen: mostrar SOLO si no hay usuario resuelto.
        Triple chequeo: boot machine + window user + Firebase auth directo.

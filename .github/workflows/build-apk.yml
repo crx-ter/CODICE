@@ -41,8 +41,7 @@ jobs:
             @capacitor/android@6.1.2 \
             @capacitor/splash-screen@6.0.1 \
             @capacitor/status-bar@6.0.1 \
-            @capacitor/keyboard@6.0.2 \
-            @capacitor/browser@6.0.0
+            @capacitor/keyboard@6.0.2
 
       # ── 5. Preparar carpeta www ───────────────────────────────────────────────
       - name: Preparar www
@@ -63,13 +62,9 @@ jobs:
         run: |
           rm -f capacitor.config.ts
           npx cap add android
+          npx cap sync android
         env:
           CI: true
-
-      # ── 6b. Sync plugins ─────────────────────────────────────────────────────
-      - name: Sync plugins
-        run: |
-          npx cap sync android
 
       # ── 7. Permisos en AndroidManifest ───────────────────────────────────────
       - name: Configurar AndroidManifest
@@ -84,26 +79,15 @@ jobs:
           grep -q 'READ_EXTERNAL_STORAGE' "$MANIFEST" || \
             sed -i 's|<application|<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    <application|' "$MANIFEST"
           sed -i 's|android:theme="@style/AppTheme"|android:theme="@style/AppTheme" android:windowSoftInputMode="adjustResize"|' "$MANIFEST" || true
-          echo "✅ AndroidManifest permisos configurados"
+          echo "✅ Permisos OK"
           grep "uses-permission" "$MANIFEST"
 
       # ── 7b. Custom Tabs para Google Sign-In ──────────────────────────────────
-      - name: Configurar Deep Link para OAuth
-        run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if ! grep -q "codice-4d18f.web.app" "$MANIFEST"; then
-            sed -i 's|</application>|<activity android:name="com.getcapacitor.BridgeActivity" android:exported="true"><intent-filter android:autoVerify="true"><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="https" android:host="codice-4d18f.web.app"/></intent-filter></activity>\n    </application>|' "$MANIFEST"
-            echo "Deep link OK"
-          else
-            echo "Deep link ya presente"
-          fi
-
       - name: Habilitar Custom Tabs
         run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
           python3 -c "
           import sys
-          path = sys.argv[1]
+          path = 'android/app/src/main/AndroidManifest.xml'
           content = open(path).read()
           if 'customtabs' not in content:
               q = '<queries><intent><action android:name=\"android.support.customtabs.action.CustomTabsService\"/></intent></queries>\n  '
@@ -112,44 +96,31 @@ jobs:
               print('Custom Tabs agregado')
           else:
               print('Custom Tabs ya presente')
-          " "$MANIFEST"
+          "
 
-      # ── 8. Tema nativo AppTheme dark ─────────────────────────────────────────
+      # ── 8. Tema nativo dark ───────────────────────────────────────────────────
       - name: Tema nativo AppTheme dark
         run: |
           STYLES="android/app/src/main/res/values/styles.xml"
           if [ -f "$STYLES" ]; then
             sed -i 's/Theme\.AppCompat\.DayNight\.DarkActionBar/Theme.AppCompat.NoActionBar/g' "$STYLES"
             grep -q 'colorBackground' "$STYLES" || python3 -c "
-          content = open('$STYLES').read()
-          items = '''    <item name=\"android:colorBackground\">#08080E</item>
-          <item name=\"colorPrimary\">#7C8CFF</item>
-          <item name=\"colorAccent\">#7C8CFF</item>
-          <item name=\"android:windowBackground\">#08080E</item>
-          <item name=\"android:statusBarColor\">#08080E</item>
-          <item name=\"android:navigationBarColor\">#08080E</item>'''
+          content = open('android/app/src/main/res/values/styles.xml').read()
+          items = '    <item name=\"android:colorBackground\">#08080E</item>\n    <item name=\"colorPrimary\">#7C8CFF</item>\n    <item name=\"colorAccent\">#7C8CFF</item>\n    <item name=\"android:statusBarColor\">#08080E</item>\n    <item name=\"android:navigationBarColor\">#08080E</item>'
           content = content.replace('</style>', items + '\n</style>', 1)
-          open('$STYLES','w').write(content)
-          print('styles.xml actualizado')
+          open('android/app/src/main/res/values/styles.xml','w').write(content)
           "
             echo "✅ styles.xml OK"
-            cat "$STYLES"
           fi
           COLORS="android/app/src/main/res/values/colors.xml"
           if [ ! -f "$COLORS" ]; then
             python3 -c "
-          xml = '''<?xml version=\"1.0\" encoding=\"utf-8\"?>
-          <resources>
-              <color name=\"black\">#08080E</color>
-              <color name=\"colorPrimary\">#7C8CFF</color>
-              <color name=\"colorAccent\">#7C8CFF</color>
-          </resources>'''
-          open('$COLORS','w').write(xml)
-          print('colors.xml creado')
+          open('android/app/src/main/res/values/colors.xml','w').write('<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<resources>\n    <color name=\"black\">#08080E</color>\n    <color name=\"colorPrimary\">#7C8CFF</color>\n    <color name=\"colorAccent\">#7C8CFF</color>\n</resources>')
           "
+            echo "✅ colors.xml creado"
           fi
 
-      # ── 9. Gradle configuración ───────────────────────────────────────────────
+      # ── 9. Gradle ─────────────────────────────────────────────────────────────
       - name: Configurar Gradle
         run: |
           printf '\nconfigurations.all { resolutionStrategy { force "org.jetbrains.kotlin:kotlin-stdlib:1.9.22"; force "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.22"; force "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.22" } }' \
@@ -159,9 +130,9 @@ jobs:
             sed -i 's/defaultConfig {/defaultConfig {\n        multiDexEnabled true/' android/app/build.gradle
           mkdir -p android/.gradle
           printf 'org.gradle.jvmargs=-Xmx4g -Xms1g -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8\norg.gradle.daemon=false\norg.gradle.parallel=true\norg.gradle.caching=true\nandroid.useAndroidX=true\nandroid.enableJetifier=true\n' >> android/gradle.properties
-          echo "✅ Gradle configurado"
+          echo "✅ Gradle OK"
 
-      # ── 10. Gradle cache ──────────────────────────────────────────────────────
+      # ── 10. Cache Gradle ──────────────────────────────────────────────────────
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -173,7 +144,7 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}-
 
-      # ── 11. Build APK debug ───────────────────────────────────────────────────
+      # ── 11. Build APK ─────────────────────────────────────────────────────────
       - name: Build APK debug
         run: |
           chmod +x android/gradlew
@@ -191,7 +162,7 @@ jobs:
         run: |
           APK_PATH=$(find android -name "*.apk" -type f | head -1)
           if [ -z "$APK_PATH" ]; then
-            echo "❌ No se encontró ningún APK" && exit 1
+            echo "❌ No se encontró APK" && exit 1
           fi
           echo "✅ APK: $APK_PATH ($(du -sh "$APK_PATH" | cut -f1))"
 

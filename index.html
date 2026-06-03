@@ -15692,58 +15692,57 @@ document.addEventListener('DOMContentLoaded', () => {
 </script>
 <script type="module">
 /* ═══════════════════════════════════════════════════════════════
-   FIREBASE + AUTH + LOGIN — módulo inline
-   Evita errores de file:// y rutas rotas entre módulos separados
+   FIREBASE + AUTH + LOGIN — CÓDICE v5
+   Solo Email/Password. Sin Google. Profesional.
 ═══════════════════════════════════════════════════════════════ */
 
-// ═══════════ 1. FIREBASE SERVICE ═══════════
-/* ═══════════════════════════════════════════════════════════════
-   FIREBASE SERVICE — CÓDICE
-   Inicialización de Firebase App, Auth y Firestore.
-   Usa CDN imports (compat) para ser compatible con el index.html
-   que no tiene bundler/npm. Se carga como módulo ES en un <script type="module">.
-═══════════════════════════════════════════════════════════════ */
-
-// ── Configuración ──────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+// 1. FIREBASE SERVICE
+// ══════════════════════════════════════════════════════════════
 const firebaseConfig = {
-  apiKey: "AIzaSyDLQ3dHp-YV-vObebnEXEssb50UDeheexM",
-  authDomain: "codice-4d18f.web.app",
-  projectId: "codice-4d18f",
-  storageBucket: "codice-4d18f.firebasestorage.app",
+  apiKey:            "AIzaSyDLQ3dHp-YV-vObebnEXEssb50UDeheexM",
+  authDomain:        "codice-4d18f.web.app",
+  projectId:         "codice-4d18f",
+  storageBucket:     "codice-4d18f.firebasestorage.app",
   messagingSenderId: "332267079461",
-  appId: "1:332267079461:web:f9153c93ef1653b7b2fccc",
-  measurementId: "G-TT1ZZ6RHZ3"
+  appId:             "1:332267079461:web:f9153c93ef1653b7b2fccc",
+  measurementId:     "G-TT1ZZ6RHZ3"
 };
 
-// ── Imports desde CDN ─────────────────────────────────────────
-import { initializeApp }          from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup,
-         signInWithRedirect, getRedirectResult,
-         signOut, onAuthStateChanged,
-         setPersistence, browserLocalPersistence }
-                                   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, doc, setDoc, getDoc,
-         collection, onSnapshot, serverTimestamp }
-                                   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { getStorage }              from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+import { initializeApp }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import {
+  getAuth,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  reload,
+  signOut,
+  onAuthStateChanged,
+  setPersistence,
+  browserLocalPersistence,
+  updateProfile
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import {
+  getFirestore, doc, setDoc, getDoc,
+  collection, onSnapshot, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getStorage }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
-// ── Init ──────────────────────────────────────────────────────
 const _app  = initializeApp(firebaseConfig);
 const _auth = getAuth(_app);
 const _db   = getFirestore(_app);
 const _stor = getStorage(_app);
 
-// Persistencia local — sobrevive recarga de pestaña
-setPersistence(_auth, browserLocalPersistence).catch(e =>
-  console.warn('[Firebase] setPersistence:', e));
+setPersistence(_auth, browserLocalPersistence)
+  .catch(e => console.warn('[Firebase] setPersistence:', e));
 
-// ── Exponer globalmente para que el resto del app (index.html) los use ──
 window.FIREBASE_APP  = _app;
 window.FIREBASE_AUTH = _auth;
 window.FIREBASE_DB   = _db;
 window.FIREBASE_STOR = _stor;
-
-// Exponer helpers de Firestore para scripts no-módulo (window.doc, etc.)
 window.doc             = doc;
 window.setDoc          = setDoc;
 window.getDoc          = getDoc;
@@ -15751,1868 +15750,796 @@ window.collection      = collection;
 window.onSnapshot      = onSnapshot;
 window.serverTimestamp = serverTimestamp;
 
-// Re-exportar helpers de Firestore y Storage para que auth.js los use
-export { _app, _auth, _db, _stor,
-         doc, setDoc, getDoc, collection, onSnapshot, serverTimestamp,
-         GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult,
-         signOut, onAuthStateChanged };
+// ══════════════════════════════════════════════════════════════
+// 2. AUTH SERVICE
+// ══════════════════════════════════════════════════════════════
+let _current   = null;
+let _ready     = false;
+let _readyCbs  = [];
+const _listeners = new Set();
 
-
-// ═══════════ 2. AUTH SERVICE ═══════════
-/* ═══════════════════════════════════════════════════════════════
-   AUTH SERVICE — CÓDICE
-   Login con Google, logout, persistencia de sesión,
-   estado reactivo de usuario.
-   
-   API pública (en window.Auth):
-     Auth.loginWithGoogle()  → Promise
-     Auth.logout()           → Promise
-     Auth.currentUser()      → {uid, email, displayName, photoURL} | null
-     Auth.onUserChange(fn)   → unsub function
-     Auth.waitForUser()      → Promise<user|null> — útil en init()
-═══════════════════════════════════════════════════════════════ */
-
-// (imports inlined above)
-
-// ── Estado interno ─────────────────────────────────────────────
-let _currentUser  = null;
-let _authReady    = false;
-let _authReadyCb  = [];          // callbacks que esperan el primer onAuthStateChanged
-const _listeners  = new Set();   // suscriptores externos
-
-// ── Provider ──────────────────────────────────────────────────
-const _provider = new GoogleAuthProvider();
-_provider.addScope("profile");
-_provider.addScope("email");
-// FIX: Forzar siempre el selector de cuenta (no reutiliza sesión del sistema)
-_provider.setCustomParameters({
-  prompt: 'select_account'
-});
-
-// ── getRedirectResult — procesar resultado de redirect ANTES de resolver auth ──
-// Guardamos la promesa para que onAuthStateChanged pueda esperarla si recibe null.
-// Esto evita que el boot machine resuelva con null durante el breve sign-out
-// que Firebase hace al cambiar de cuenta vía redirect.
-let _redirectResultSettled = false;
-let _redirectResultUser    = null;
-
-const _redirectPromise = getRedirectResult(_auth).then(result => {
-  if (result && result.user) {
-    console.log('[Auth] Redirect login exitoso:', result.user.email);
-    _redirectResultUser = _mapUser(result.user);
-    // Actualizar estado actual inmediatamente
-    _currentUser = _redirectResultUser;
-    _listeners.forEach(fn => { try { fn(_currentUser); } catch {} });
-  }
-}).catch(e => {
-  if (e.code !== 'auth/no-auth-event' && e.code !== 'auth/internal-error') {
-    console.warn('[Auth] getRedirectResult error:', e.code);
-  }
-}).finally(() => {
-  _redirectResultSettled = true;
-});
-
-const _unsub = onAuthStateChanged(_auth, async (fbUser) => {
-  _currentUser = fbUser ? _mapUser(fbUser) : null;
-
-  if (fbUser) {
-    // Upsert del perfil en Firestore (no falla si ya existe)
-    try {
-      const ref = doc(_db, "users", fbUser.uid, "profile", "info");
-      await setDoc(ref, {
-        email:       fbUser.email,
-        displayName: fbUser.displayName,
-        photoURL:    fbUser.photoURL,
-        lastLogin:   serverTimestamp()
-      }, { merge: true });
-    } catch (e) {
-      console.warn("[Auth] Firestore profile upsert:", e);
-    }
-  }
-
-  // Notificar a todos los listeners
-  _listeners.forEach(fn => { try { fn(_currentUser); } catch {} });
-
-  // Resolver promesas pendientes del primer estado.
-  // Si fbUser es null, esperamos a que getRedirectResult termine primero:
-  // Firebase hace sign-out temporal del usuario anterior durante un redirect,
-  // lo que dispararía onAuthStateChanged(null) antes de que llegue el usuario nuevo.
-  // Si no esperamos, waitForUser() resuelve con null y el boot muestra LoginScreen.
-  if (!_authReady) {
-    if (fbUser) {
-      // Hay usuario confirmado — resolver de inmediato
-      _authReady = true;
-      _authReadyCb.forEach(resolve => resolve(_currentUser));
-      _authReadyCb = [];
-    } else {
-      // null: puede ser un logout temporal de redirect — esperar a que getRedirectResult resuelva
-      _redirectPromise.finally(() => {
-        if (!_authReady) {
-          // Usar el usuario del redirect si lo hay, si no confirmar null
-          if (_redirectResultUser) {
-            _currentUser = _redirectResultUser;
-          }
-          _authReady = true;
-          _authReadyCb.forEach(resolve => resolve(_currentUser));
-          _authReadyCb = [];
-        }
-      });
-    }
-  }
-});
-
-// ── Helpers privados ──────────────────────────────────────────
-function _mapUser(fbUser) {
+function _mapUser(u) {
+  if (!u) return null;
   return {
-    uid:         fbUser.uid,
-    email:       fbUser.email,
-    displayName: fbUser.displayName || fbUser.email,
-    photoURL:    fbUser.photoURL    || null
+    uid:           u.uid,
+    email:         u.email,
+    displayName:   u.displayName || u.email.split('@')[0],
+    photoURL:      u.photoURL    || null,
+    emailVerified: u.emailVerified
   };
 }
 
-// ── API pública ───────────────────────────────────────────────
+async function _upsertProfile(u) {
+  try {
+    await setDoc(doc(_db, "users", u.uid, "profile", "info"), {
+      email:       u.email,
+      displayName: u.displayName || u.email.split('@')[0],
+      photoURL:    u.photoURL    || null,
+      lastLogin:   serverTimestamp(),
+      provider:    "email"
+    }, { merge: true });
+  } catch(e) { console.warn("[Auth] Firestore upsert:", e.code); }
+}
+
+function _notify(u) {
+  _listeners.forEach(fn => { try { fn(u); } catch {} });
+}
+
+function _resolve(u) {
+  if (!_ready) {
+    _ready = true;
+    _readyCbs.forEach(r => r(u));
+    _readyCbs = [];
+  }
+}
+
+onAuthStateChanged(_auth, async fbUser => {
+  if (fbUser) {
+    try { await reload(fbUser); } catch {}
+    const fresh = _auth.currentUser || fbUser;
+    _current = _mapUser(fresh);
+    if (fresh.emailVerified) await _upsertProfile(fresh);
+  } else {
+    _current = null;
+  }
+  _notify(_current);
+  _resolve(_current);
+});
+
+const _ERRS = {
+  "auth/user-not-found":         "No existe una cuenta con ese correo.",
+  "auth/wrong-password":         "Contraseña incorrecta.",
+  "auth/invalid-credential":     "Correo o contraseña incorrectos.",
+  "auth/email-already-in-use":   "Ya existe una cuenta con ese correo.",
+  "auth/weak-password":          "La contraseña es muy débil (mínimo 6 caracteres).",
+  "auth/invalid-email":          "El formato del correo no es válido.",
+  "auth/too-many-requests":      "Demasiados intentos. Espera unos minutos o restablece tu contraseña.",
+  "auth/network-request-failed": "Sin conexión a internet. Revisa tu red.",
+  "auth/user-disabled":          "Esta cuenta fue deshabilitada.",
+  "auth/missing-email":          "Ingresa tu correo electrónico.",
+  "auth/missing-password":       "Ingresa tu contraseña.",
+};
+
+function _err(e) {
+  const code = e?.code || "unknown";
+  const message = _ERRS[code] || e?.message || "Error desconocido. Intenta de nuevo.";
+  console.error("[Auth]", code, e?.message);
+  return { ok: false, code, message };
+}
+
 const Auth = {
-
-  /** Login con Google — nativo en Capacitor (hoja de cuentas del sistema), popup en web */
-  async loginWithGoogle() {
-    // ── Estrategia de login por plataforma ──────────────────────────────────
-    //
-    // CAPACITOR (APK): @codetrix-studio/capacitor-google-auth
-    //   → Abre la hoja de selección de cuentas del sistema operativo
-    //   → Igual que Gmail, ChatGPT, Notion, etc.
-    //   → NO sale de la app, NO pide 2FA si ya hay sesión activa
-    //   → El usuario puede cambiar de cuenta libremente
-    //
-    // WEB (navegador): signInWithPopup de Firebase
-    //   → Abre Chrome Custom Tab con el flujo OAuth de Google
-    //   → Correcto para PWA en navegador
-    //
-    // NUNCA: signInWithRedirect
-    //   → En WebView redirige al Chrome del sistema (sale de la app)
-    //   → Siempre pide email + contraseña + 2FA
-    //   → La vuelta puede dejar pantalla negra
-    //   → Fija la cuenta (no permite cambiar)
-
-    const isCapacitor = typeof window.Capacitor !== 'undefined' &&
-                        window.Capacitor.isNativePlatform &&
-                        window.Capacitor.isNativePlatform();
-
-    // ── Ruta Capacitor: GoogleAuth nativo ────────────────────────────────────
-    if (isCapacitor) {
-      try {
-        const GoogleAuth = window.Capacitor?.Plugins?.GoogleAuth;
-        if (GoogleAuth) {
-          // Intentar login nativo (hoja de cuentas del sistema)
-          const googleUser = await GoogleAuth.signIn();
-          // Construir credencial Firebase con el token del plugin
-          const { GoogleAuthProvider: GAP, signInWithCredential } = await import(
-            'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js'
-          );
-          const credential = GAP.credential(googleUser.authentication.idToken);
-          const result = await signInWithCredential(_auth, credential);
-          return { ok: true, user: _mapUser(result.user) };
-        }
-        // Plugin no disponible — caer en popup
-        console.warn('[Auth] GoogleAuth plugin no disponible, usando popup');
-      } catch (e) {
-        if (e.message === 'The user cancelled the sign-in flow.' ||
-            e.code === 'SIGN_IN_CANCELLED') {
-          return { ok: false, cancelled: true };
-        }
-        console.error('[Auth] GoogleAuth nativo error:', e);
-        // No retornar aquí — caer en popup como respaldo
-      }
-    }
-
-    // ── Ruta Web / respaldo: signInWithPopup ─────────────────────────────────
+  async register(email, password, displayName = "") {
     try {
-      const result = await signInWithPopup(_auth, _provider);
-      return { ok: true, user: _mapUser(result.user) };
-    } catch (e) {
-      if (e.code === 'auth/popup-closed-by-user' ||
-          e.code === 'auth/cancelled-popup-request') {
-        return { ok: false, cancelled: true };
+      const cred = await createUserWithEmailAndPassword(_auth, email, password);
+      if (displayName.trim()) {
+        try { await updateProfile(cred.user, { displayName: displayName.trim() }); } catch {}
       }
-      if (e.code === 'auth/popup-blocked') {
-        return { ok: false, error: 'El popup fue bloqueado. Verifica que los Custom Tabs están habilitados en tu dispositivo.' };
+      try {
+        await sendEmailVerification(cred.user, {
+          url: window.location.origin + "/?emailVerified=1",
+          handleCodeInApp: false
+        });
+      } catch {
+        try { await sendEmailVerification(cred.user); } catch {}
       }
-      if (e.code === 'auth/unauthorized-domain') {
-        return { ok: false, error: 'Dominio no autorizado. Ve a Firebase Console > Auth > Authorized domains y agrega el dominio.' };
+      return { ok: true, needsVerification: true, email: cred.user.email };
+    } catch(e) { return _err(e); }
+  },
+
+  async login(email, password) {
+    try {
+      const cred = await signInWithEmailAndPassword(_auth, email, password);
+      try { await reload(cred.user); } catch {}
+      const fresh = _auth.currentUser;
+      if (!fresh.emailVerified) {
+        try { await sendEmailVerification(fresh); } catch {}
+        return { ok: true, needsVerification: true, email: fresh.email };
       }
-      console.error("[Auth] loginWithGoogle popup:", e.code, e.message);
-      return { ok: false, error: e.message };
+      _current = _mapUser(fresh);
+      await _upsertProfile(fresh);
+      _notify(_current);
+      return { ok: true, user: _current };
+    } catch(e) { return _err(e); }
+  },
+
+  async sendPasswordReset(email) {
+    if (!email || !email.includes("@"))
+      return { ok: false, code: "auth/invalid-email", message: "Ingresa un correo válido." };
+    try {
+      try {
+        await sendPasswordResetEmail(_auth, email, {
+          url: window.location.origin + "/?passwordReset=1",
+          handleCodeInApp: false
+        });
+      } catch(e1) {
+        if (e1.code === "auth/unauthorized-continue-uri" || e1.code === "auth/invalid-continue-uri") {
+          await sendPasswordResetEmail(_auth, email);
+        } else throw e1;
+      }
+      return { ok: true, email };
+    } catch(e) {
+      if (e.code === "auth/user-not-found") return { ok: true, email };
+      return _err(e);
     }
   },
 
-  /** Cierra sesión */
+  async resendVerification() {
+    const u = _auth.currentUser;
+    if (!u) return { ok: false, message: "No hay sesión activa." };
+    if (u.emailVerified) return { ok: true, alreadyVerified: true };
+    try { await sendEmailVerification(u); return { ok: true }; }
+    catch(e) { return _err(e); }
+  },
+
+  async reloadUser() {
+    const u = _auth.currentUser;
+    if (!u) return { verified: false };
+    try {
+      await reload(u);
+      const fresh = _auth.currentUser;
+      if (fresh?.emailVerified) {
+        _current = _mapUser(fresh);
+        await _upsertProfile(fresh);
+        _notify(_current);
+        _resolve(_current);
+        return { verified: true, user: _current };
+      }
+      return { verified: false };
+    } catch { return { verified: false }; }
+  },
+
   async logout() {
     try {
+      _ready = false; _current = null;
       await signOut(_auth);
+      _notify(null);
       return { ok: true };
-    } catch (e) {
-      console.error("[Auth] logout:", e);
-      return { ok: false, error: e.message };
-    }
+    } catch(e) { return _err(e); }
   },
 
-  /** Usuario actual (sincrónico, puede ser null si aún no resolvió) */
-  currentUser() {
-    return _currentUser;
-  },
-
-  /** Suscribirse a cambios de usuario; retorna función de limpieza */
+  currentUser()    { return _current; },
   onUserChange(fn) {
     _listeners.add(fn);
-    // Llamar inmediatamente si ya tenemos estado
-    if (_authReady) { try { fn(_currentUser); } catch {} }
+    if (_ready) { try { fn(_current); } catch {} }
     return () => _listeners.delete(fn);
   },
-
-  /** Espera a que Firebase resuelva el estado inicial (útil en init()) */
   waitForUser() {
-    if (_authReady) return Promise.resolve(_currentUser);
-    return new Promise(resolve => _authReadyCb.push(resolve));
+    if (_ready) return Promise.resolve(_current);
+    return new Promise(r => _readyCbs.push(r));
   }
 };
 
-// Exponer globalmente
 window.Auth = Auth;
-// ═══════════ 2.5. FIRESTORE SYNC ═══════════
-/* ═══════════════════════════════════════════════════════════════
-   FIRESTORE SYNC — CÓDICE
-   Sincronización bidireccional con Firestore.
-   Solo activo si hay usuario autenticado.
 
-   API pública (en window.FirestoreSync):
-     FirestoreSync.init(localTimestamp)  → Promise<remoteState|null>
-     FirestoreSync.push(state)           → Promise<void>
-     FirestoreSync.pull()                → Promise<state|null>
-     FirestoreSync.disable()             → void
-     FirestoreSync.onRemoteChange(fn)    → unsub function
-═══════════════════════════════════════════════════════════════ */
+// ══════════════════════════════════════════════════════════════
+// 3. LOGIN SCREEN — Galaxy canvas + flujo email profesional
+// ══════════════════════════════════════════════════════════════
 
-// (Usa doc, setDoc, getDoc, onSnapshot, serverTimestamp importados arriba)
-
-window.FirestoreSync = (() => {
-
-  // ── Ruta canónica: users/{uid}/data/state ─────────────────────
-  const _DOC_PATH = (uid) => ['users', uid, 'data', 'state'];
-
-  // ── Estado interno ─────────────────────────────────────────────
-  let _activeListeners = [];   // { unsub: Function } — para disable()
-  let _enabled = false;
-
-  // ── Helpers ────────────────────────────────────────────────────
-
-  /** UID del usuario activo, o null */
-  function _uid() {
-    // Prioridad: Auth.currentUser() > window.__codiceUser > FIREBASE_AUTH.currentUser
-    try {
-      const u = (typeof Auth !== 'undefined' && Auth.currentUser)
-        ? Auth.currentUser()
-        : (window.__codiceUser || (window.FIREBASE_AUTH?.currentUser) || null);
-      return u?.uid ?? null;
-    } catch { return null; }
-  }
-
-  /** Referencia Firestore al documento de estado del usuario activo */
-  function _docRef() {
-    const uid = _uid();
-    if (!uid) return null;
-    const [col1, id1, col2, id2] = _DOC_PATH(uid);
-    return doc(_db, col1, id1, col2, id2);
-  }
-
-  /**
-   * Limpia campos internos de Firestore antes de devolver al Store.
-   * No toca módulos / clases / bloques.
-   */
-  function _clean(data) {
-    if (!data || typeof data !== 'object') return null;
-    const { _firestoreTs, updatedAt, ...rest } = data;
-    // Devolvemos updatedAt como parte del payload para que init() pueda comparar
-    return Object.keys(rest).length ? { ...rest, updatedAt } : null;
-  }
-
-  /**
-   * Compara dos timestamps (ms). Acepta null / undefined → 0.
-   */
-  function _ts(val) {
-    if (!val) return 0;
-    if (typeof val === 'number') return val;
-    // Puede ser Date
-    if (val instanceof Date) return val.getTime();
-    return 0;
-  }
-
-  // ── API pública ────────────────────────────────────────────────
-
-  /**
-   * init(localTimestamp)
-   *  - Si no hay datos remotos → sube el estado local (desde Store) y retorna null.
-   *  - Si remoto es más nuevo → retorna el estado remoto.
-   *  - Si local es más nuevo   → sube el local y retorna null.
-   *
-   * @param {number} localTimestamp — ms del estado local (0 = vacío/desconocido)
-   * @returns {Promise<object|null>}
-   */
-  async function init(localTimestamp = 0) {
-    const uid = _uid();
-    if (!uid) {
-      console.warn('[FirestoreSync] init() sin usuario autenticado.');
-      return null;
-    }
-    _enabled = true;
-
-    try {
-      const ref = _docRef();
-      const snap = await getDoc(ref);
-
-      if (!snap.exists()) {
-        // Sin datos remotos → subir local y retornar null
-        console.log('[FirestoreSync] Sin datos remotos — subiendo estado local.');
-        const localState = _getLocalState();
-        if (localState) await push(localState);
-        return null;
-      }
-
-      const remote = snap.data();
-      const remoteTs = _ts(remote.updatedAt);
-      const localTs  = _ts(localTimestamp) || _getLocalTimestamp();
-
-      if (remoteTs > localTs) {
-        console.log('[FirestoreSync] Datos remotos más recientes — aplicando.',
-          { remoteTs, localTs });
-        return _clean(remote);
-      }
-
-      // Local más reciente → subir
-      console.log('[FirestoreSync] Estado local más reciente — sincronizando.',
-        { remoteTs, localTs });
-      const localState = _getLocalState();
-      if (localState) await push(localState);
-      return null;
-
-    } catch (e) {
-      console.warn('[FirestoreSync] init() falló (posible modo offline):', e.message);
-      return null;
-    }
-  }
-
-  /**
-   * push(state)
-   * Sube el estado completo a Firestore en users/{uid}/data/state.
-   * Añade el campo updatedAt con la hora actual.
-   *
-   * @param {object} state — { modules, streak, lastStudy, settings }
-   * @returns {Promise<void>}
-   */
-  async function push(state) {
-    if (!_enabled) return;
-    const ref = _docRef();
-    if (!ref) {
-      console.warn('[FirestoreSync] push() sin usuario autenticado.');
-      return;
-    }
-    try {
-      // [CRITICAL-1] Eliminar la apiKey y cualquier secreto antes de subir a Firestore
-      const { apiKey, openaiKey, anthropicKey, secretKey, token, ...safeSettings } =
-        (state.settings && typeof state.settings === 'object') ? state.settings : {};
-
-      const payload = {
-        modules:   state.modules   ?? [],
-        streak:    state.streak    ?? 0,
-        lastStudy: state.lastStudy ?? null,
-        settings:  safeSettings,        // ← sin apiKey
-        updatedAt: Date.now(),
-        _firestoreTs: serverTimestamp()   // campo de auditoría, no se devuelve al Store
-      };
-      // [BUG-4 FIX] Guardia de tamaño: Firestore tiene límite de 1MB por documento
-      const _payloadSize = JSON.stringify(payload).length;
-      if (_payloadSize > 900_000) {
-        console.warn('[FirestoreSync] Payload demasiado grande para Firestore:', _payloadSize, 'bytes. Sync omitido.');
-        try { if (typeof Toast !== 'undefined') Toast.warning('⚠️ Módulos muy grandes para sincronizar en la nube. Datos guardados localmente.'); } catch {}
-        return;
-      }
-      await setDoc(ref, payload, { merge: false });
-      console.debug('[FirestoreSync] Estado subido a Firestore.');
-    } catch (e) {
-      console.warn('[FirestoreSync] push() falló:', e.message);
-      // No re-lanzar — el fallback local (IDB/localStorage) ya tiene los datos.
-    }
-  }
-
-  /**
-   * pull()
-   * Descarga el estado desde Firestore.
-   * Retorna null si no existe o hay error.
-   *
-   * @returns {Promise<object|null>}
-   */
-  async function pull() {
-    const ref = _docRef();
-    if (!ref) return null;
-    try {
-      const snap = await getDoc(ref);
-      return snap.exists() ? _clean(snap.data()) : null;
-    } catch (e) {
-      console.warn('[FirestoreSync] pull() falló:', e.message);
-      return null;
-    }
-  }
-
-  /**
-   * disable()
-   * Cancela todos los listeners activos (llamar al cerrar sesión).
-   */
-  function disable() {
-    _activeListeners.forEach(({ unsub }) => { try { unsub(); } catch {} });
-    _activeListeners = [];
-    _enabled = false;
-    console.debug('[FirestoreSync] Sync desactivado.');
-  }
-
-  /**
-   * onRemoteChange(fn)
-   * Escucha cambios en tiempo real desde Firestore (soporte multi-dispositivo).
-   * fn recibe el estado remoto limpio cada vez que cambia.
-   *
-   * @param {function} fn — callback(state: object)
-   * @returns {function} — función de limpieza (unsub)
-   */
-  function onRemoteChange(fn) {
-    const ref = _docRef();
-    if (!ref) {
-      console.warn('[FirestoreSync] onRemoteChange() sin usuario autenticado.');
-      return () => {};
-    }
-
-    let _skipFirst = true; // ignorar el disparo inicial (ya sincronizado en init)
-
-    const unsub = onSnapshot(ref, (snap) => {
-      if (_skipFirst) { _skipFirst = false; return; }
-      if (!snap.exists()) return;
-      const state = _clean(snap.data());
-      if (state && typeof fn === 'function') {
-        try { fn(state); } catch (e) {
-          console.warn('[FirestoreSync] onRemoteChange callback error:', e.message);
-        }
-      }
-    }, (e) => {
-      console.warn('[FirestoreSync] onSnapshot error:', e.message);
+/* ── Música de login (igual que antes) ── */
+let _loginAudioCtx = null, _loginMusicNodes = [], _loginMusicPlaying = false;
+function _startLoginMusic() {
+  if (_loginMusicPlaying) return;
+  try {
+    _loginAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const master = _loginAudioCtx.createGain(); master.gain.value = 0.07; master.connect(_loginAudioCtx.destination);
+    [[220,.8],[330,.5],[440,.3],[550,.2]].forEach(([f,g],i) => {
+      const o=_loginAudioCtx.createOscillator(), gn=_loginAudioCtx.createGain();
+      o.type='sine'; o.frequency.value=f; gn.gain.value=g;
+      o.connect(gn); gn.connect(master); o.start(i*.08);
+      _loginMusicNodes.push(o,gn);
     });
-
-    const entry = { unsub };
-    _activeListeners.push(entry);
-
-    // Retornar función que cancela solo este listener
-    return () => {
-      try { unsub(); } catch {}
-      _activeListeners = _activeListeners.filter(l => l !== entry);
-    };
-  }
-
-  // ── Helpers internos para leer el Store local ──────────────────
-
-  /** Obtiene el estado completo desde Store (si está disponible) */
-  function _getLocalState() {
-    try {
-      if (typeof Store !== 'undefined' && Store.get) {
-        const s = Store.get();
-        return {
-          modules:   s.modules   ?? [],
-          streak:    s.streak    ?? 0,
-          lastStudy: s.lastStudy ?? null,
-          settings:  s.settings  ?? {}
-        };
-      }
-    } catch {}
-    return null;
-  }
-
-  /**
-   * Intenta obtener el timestamp más reciente del estado local
-   * revisando el campo updatedAt de módulos/clases/bloques,
-   * o el timestamp de IDB/localStorage si está disponible.
-   */
-  function _getLocalTimestamp() {
-    try {
-      const s = _getLocalState();
-      if (!s) return 0;
-      let max = 0;
-      for (const mod of (s.modules || [])) {
-        if (_ts(mod.updatedAt) > max) max = _ts(mod.updatedAt);
-        if (_ts(mod.createdAt) > max) max = _ts(mod.createdAt);
-        for (const cls of (mod.classes || [])) {
-          if (_ts(cls.updatedAt) > max) max = _ts(cls.updatedAt);
-          for (const blk of (cls.blocks || [])) {
-            if (_ts(blk.updatedAt) > max) max = _ts(blk.updatedAt);
-          }
-        }
-        for (const div of (mod.divisions || [])) {
-          for (const cls of (div.classes || [])) {
-            if (_ts(cls.updatedAt) > max) max = _ts(cls.updatedAt);
-            for (const blk of (cls.blocks || [])) {
-              if (_ts(blk.updatedAt) > max) max = _ts(blk.updatedAt);
-            }
-          }
-        }
-      }
-      return max;
-    } catch { return 0; }
-  }
-
-  // ── markDirty: debounced cloud push (called from sv() on every save) ──────
-  let _dirtyTimer = null;
-  let _dirtyPending = false;
-
-  /**
-   * markDirty(state) — programa una escritura a Firestore con debounce de 2s.
-   * Si se llama repetidamente (ediciones rápidas), colapsa en una sola escritura.
-   * Compatible con la llamada sv() → FirestoreSync.markDirty(S()).
-   */
-  function markDirty(state) {
-    if (!_enabled) return;
-    const uid = _uid();
-    if (!uid) return;
-    _dirtyPending = true;
-    if (_dirtyTimer) clearTimeout(_dirtyTimer);
-    _dirtyTimer = setTimeout(async () => {
-      if (!_dirtyPending) return;
-      _dirtyPending = false;
-      _dirtyTimer = null;
-      await push(state || _getLocalState());
-    }, 2000); // 2s debounce — rápido pero no abusivo
-  }
-
-  /** flushNow(state) — escritura inmediata (p.ej. antes de cerrar sesión) */
-  async function flushNow(state) {
-    if (_dirtyTimer) { clearTimeout(_dirtyTimer); _dirtyTimer = null; }
-    _dirtyPending = false;
-    await push(state || _getLocalState());
-  }
-
-  // Flush antes de que el usuario cierre la pestaña
-  window.addEventListener('pagehide', () => {
-    if (_dirtyPending && _uid()) {
-      // sendBeacon no puede hacer setDoc, pero sí podemos intentar un fetch síncrono mínimo
-      // Al menos anulamos el timer para no dejar promesas huérfanas
-      if (_dirtyTimer) { clearTimeout(_dirtyTimer); _dirtyTimer = null; }
-      // Intentamos push best-effort (puede no completar si el tab cierra muy rápido)
-      push(_getLocalState()).catch(() => {});
-    }
-  });
-
-  return { init, push, pull, disable, onRemoteChange, markDirty, flushNow };
-
-})();
-
-// ═══════════ 3. LOGIN SCREEN — GALAXIA + MÚSICA + CUENTAS ═══════════
-
-/* ── Helpers de cuentas guardadas ── */
-const _ACCTS_KEY = 'codice_accounts';
-function _loadAccounts(){ try{ return JSON.parse(localStorage.getItem(_ACCTS_KEY)||'[]'); }catch{return[];} }
-function _saveAccounts(list){ try{ localStorage.setItem(_ACCTS_KEY, JSON.stringify(list)); }catch{} }
-function _upsertAccount(user){
-  const list = _loadAccounts();
-  const idx  = list.findIndex(a => a.uid === user.uid);
-  const entry = { uid:user.uid, displayName:user.displayName, email:user.email, photoURL:user.photoURL||null, lastLogin:Date.now() };
-  if(idx>=0) list[idx]={...list[idx],...entry}; else list.unshift(entry);
-  // max 4 cuentas
-  _saveAccounts(list.slice(0,4));
-  // Cachear foto como base64 para no depender de lh3.googleusercontent.com
-  if(user.photoURL && user.uid){
-    const cacheKey = 'codice_profile_avatar_'+user.uid;
-    const existing = localStorage.getItem(cacheKey);
-    // Solo descargar si no está ya cacheada o si la URL cambió
-    if(!existing || !existing.startsWith('data:')){
-      // Obtener URL de mayor resolución (s200 en vez de s96)
-      const hiResUrl = user.photoURL.replace(/=s\d+(-c)?$/, '=s200-c').replace(/\/s\d+(-c)?\//, '/s200-c/');
-      fetch(hiResUrl, {mode:'cors'}).then(r=>r.blob()).then(blob=>{
-        const reader = new FileReader();
-        reader.onload = () => {
-          try {
-            localStorage.setItem(cacheKey, reader.result);
-            // Actualizar la UI con la foto cacheada
-            const imgs = document.querySelectorAll('#pill-avatar-img, #upm-avatar-img, #prof-avatar-img, #user-badge-img');
-            imgs.forEach(img=>{ if(img){ img.src=reader.result; img.style.display='block'; } });
-            // Actualizar también en la lista de cuentas guardadas
-            const lst = _loadAccounts();
-            const i = lst.findIndex(a=>a.uid===user.uid);
-            if(i>=0){ lst[i].photoURL = hiResUrl; _saveAccounts(lst); }
-          } catch(e){ /* localStorage lleno, ignorar */ }
-        };
-        reader.readAsDataURL(blob);
-      }).catch(()=>{
-        // Falló fetch — intentar con img element (evita CORS en algunos browsers)
-        const img = new Image(); img.crossOrigin='anonymous';
-        img.onload = () => {
-          try {
-            const c = document.createElement('canvas');
-            c.width=img.width; c.height=img.height;
-            c.getContext('2d').drawImage(img,0,0);
-            const dataUrl = c.toDataURL('image/jpeg',0.85);
-            localStorage.setItem(cacheKey, dataUrl);
-            const imgs = document.querySelectorAll('#pill-avatar-img, #upm-avatar-img, #prof-avatar-img, #user-badge-img');
-            imgs.forEach(el=>{ if(el){ el.src=dataUrl; el.style.display='block'; } });
-          } catch(e){ /* tainting o localStorage lleno */ }
-        };
-        img.src = user.photoURL;
-      });
-    }
-  }
-}
-function _getPin(uid){ try{ return localStorage.getItem('codice_pin_'+uid)||null; }catch{return null;} }
-function _setPin(uid,pin){ try{ localStorage.setItem('codice_pin_'+uid,pin); }catch{} }
-function _removePin(uid){ try{ localStorage.removeItem('codice_pin_'+uid); }catch{} }
-
-/* ── Música instrumental (Emociones — Hades 66) via Web Audio API synthesized ── */
-let _loginAudioCtx = null;
-let _loginMusicNodes = [];
-let _loginMusicPlaying = false;
-
-function _startLoginMusic(){
-  if(_loginMusicPlaying) return;
-  try{
-    _loginAudioCtx = new (window.AudioContext||window.webkitAudioContext)();
-    const ctx = _loginAudioCtx;
     _loginMusicPlaying = true;
-
-    // Melodía inspirada en Emociones: progresión Am - F - C - G
-    // Sintetizamos una melodía suave con osciladores
-    const master = ctx.createGain();
-    master.gain.setValueAtTime(0, ctx.currentTime);
-    master.gain.linearRampToValueAtTime(0.22, ctx.currentTime + 2);
-    master.connect(ctx.destination);
-
-    // Reverb sutil via ConvolverNode simulado con delay
-    const delay = ctx.createDelay(0.4);
-    delay.delayTime.value = 0.35;
-    const delayGain = ctx.createGain();
-    delayGain.gain.value = 0.18;
-    delay.connect(delayGain);
-    delayGain.connect(delay);
-    delayGain.connect(master);
-
-    // Notas de la melodía principal (Am pentatónica + emocional)
-    const BPM = 76;
-    const beat = 60 / BPM;
-    // Progresión: Am F C G repetida con variaciones
-    const MELODY = [
-      // compás 1 - Am
-      {f:440,t:0,d:beat*1.5},{f:392,t:beat*1.5,d:beat*0.5},{f:349,t:beat*2,d:beat},{f:330,t:beat*3,d:beat},
-      // compás 2 - F  
-      {f:349,t:beat*4,d:beat*2},{f:392,t:beat*6,d:beat*2},
-      // compás 3 - C
-      {f:523,t:beat*8,d:beat*1.5},{f:494,t:beat*9.5,d:beat*0.5},{f:440,t:beat*10,d:beat*2},
-      // compás 4 - G
-      {f:392,t:beat*12,d:beat*1.5},{f:440,t:beat*13.5,d:beat*0.5},{f:494,t:beat*14,d:beat*2},
-      // variación
-      {f:523,t:beat*16,d:beat*2},{f:494,t:beat*18,d:beat},{f:440,t:beat*19,d:beat},
-      {f:392,t:beat*20,d:beat*2},{f:349,t:beat*22,d:beat*2},
-      {f:330,t:beat*24,d:beat*2},{f:294,t:beat*26,d:beat},{f:330,t:beat*27,d:beat},
-      {f:349,t:beat*28,d:beat*4},
-    ];
-    const LOOP_LEN = beat * 32;
-
-    function playMelodyLoop(startTime){
-      if(!_loginMusicPlaying) return;
-      MELODY.forEach(n=>{
-        const osc = ctx.createOscillator();
-        const g   = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.value = n.f;
-        g.gain.setValueAtTime(0, startTime+n.t);
-        g.gain.linearRampToValueAtTime(0.35, startTime+n.t+0.04);
-        g.gain.setValueAtTime(0.35, startTime+n.t+n.d*0.7);
-        g.gain.linearRampToValueAtTime(0, startTime+n.t+n.d);
-        osc.connect(g); g.connect(master); g.connect(delay);
-        osc.start(startTime+n.t);
-        osc.stop(startTime+n.t+n.d+0.05);
-        _loginMusicNodes.push(osc,g);
-      });
-      // bajo pad suave
-      const PAD = [{f:110,t:0,d:beat*8},{f:87,t:beat*8,d:beat*8},{f:98,t:beat*16,d:beat*8},{f:98,t:beat*24,d:beat*8}];
-      PAD.forEach(n=>{
-        const osc=ctx.createOscillator();const g=ctx.createGain();
-        osc.type='triangle';osc.frequency.value=n.f;
-        g.gain.setValueAtTime(0,startTime+n.t);
-        g.gain.linearRampToValueAtTime(0.12,startTime+n.t+0.5);
-        g.gain.setValueAtTime(0.12,startTime+n.t+n.d-0.5);
-        g.gain.linearRampToValueAtTime(0,startTime+n.t+n.d);
-        osc.connect(g);g.connect(master);
-        osc.start(startTime+n.t);osc.stop(startTime+n.t+n.d+0.1);
-        _loginMusicNodes.push(osc,g);
-      });
-      // Programar siguiente loop
-      setTimeout(()=>{ if(_loginMusicPlaying) playMelodyLoop(startTime+LOOP_LEN); }, LOOP_LEN*900);
-    }
-    playMelodyLoop(ctx.currentTime + 0.1);
-  }catch(err){ console.warn('[LoginMusic]', err); }
+  } catch {}
+}
+function _stopLoginMusic() {
+  try { _loginMusicNodes.forEach(n=>{try{n.stop?.();}catch{}}); _loginMusicNodes=[]; _loginAudioCtx?.close(); } catch {}
+  _loginAudioCtx = null; _loginMusicPlaying = false;
 }
 
-function _stopLoginMusic(){
-  _loginMusicPlaying = false;
-  if(_loginAudioCtx){
-    try{
-      _loginMusicNodes.forEach(n=>{ try{n.stop?n.stop():n.disconnect();}catch{} });
-      _loginMusicNodes=[];
-      _loginAudioCtx.close();
-    }catch{}
-    _loginAudioCtx=null;
-  }
-}
-
-/* ── Canvas de galaxia para login ── */
-function _startGalaxyCanvas(canvas){
+/* ── Galaxy canvas ── */
+function _startGalaxyCanvas(canvas) {
   const ctx = canvas.getContext('2d');
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-  const W = canvas.width, H = canvas.height;
-
-  // Estrellas
-  const stars = Array.from({length:280},()=>({
-    x:Math.random()*W, y:Math.random()*H,
-    r:Math.random()*1.8+0.3,
-    alpha:Math.random(),
-    dAlpha:(Math.random()-0.5)*0.006,
-    speed:Math.random()*0.15+0.03
+  let W = canvas.width = window.innerWidth, H = canvas.height = window.innerHeight;
+  const resize = () => { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; };
+  window.addEventListener('resize', resize);
+  const stars = Array.from({length:180}, () => ({
+    x: Math.random()*W, y: Math.random()*H,
+    r: Math.random()*1.4+.2, a: Math.random(),
+    da: (Math.random()-.5)*.004, vx: (Math.random()-.5)*.08, vy: (Math.random()-.5)*.08
   }));
-  // Cometas
-  const comets = Array.from({length:4},()=>_newComet(W,H));
-  // Nebulosas
-  const nebulas = [
-    {x:W*0.2,y:H*0.3,r:220,c:'rgba(100,60,200,'},
-    {x:W*0.75,y:H*0.65,r:180,c:'rgba(60,120,220,'},
-    {x:W*0.5,y:H*0.15,r:150,c:'rgba(140,60,180,'},
-  ];
-
-  function _newComet(W,H){
-    return { x:-80, y:Math.random()*H*0.6, vx:Math.random()*6+4, vy:Math.random()*2-1,
-      len:Math.random()*120+60, alpha:0, fading:false };
-  }
-
+  const _newComet = () => ({ x:-80, y:Math.random()*H*.5, vx:6+Math.random()*4, vy:.5+Math.random(), len:80+Math.random()*60, alpha:0, fading:false });
+  const comets = Array.from({length:3}, _newComet);
   let _raf;
-  function draw(){
-    ctx.fillStyle='rgba(4,4,14,0.18)';
-    ctx.fillRect(0,0,W,H);
-
-    // Nebulosas
-    nebulas.forEach(n=>{
-      const g=ctx.createRadialGradient(n.x,n.y,0,n.x,n.y,n.r);
-      g.addColorStop(0,n.c+'0.10)');
-      g.addColorStop(0.5,n.c+'0.05)');
-      g.addColorStop(1,'transparent');
-      ctx.fillStyle=g;
-      ctx.beginPath();ctx.ellipse(n.x,n.y,n.r,n.r*0.6,Date.now()*0.0001,0,Math.PI*2);ctx.fill();
+  function draw() {
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='rgba(4,4,14,1)'; ctx.fillRect(0,0,W,H);
+    // nebula
+    const g1=ctx.createRadialGradient(W*.3,H*.25,0,W*.3,H*.25,W*.5);
+    g1.addColorStop(0,'rgba(80,20,160,.18)'); g1.addColorStop(1,'transparent');
+    ctx.fillStyle=g1; ctx.fillRect(0,0,W,H);
+    const g2=ctx.createRadialGradient(W*.75,H*.75,0,W*.75,H*.75,W*.4);
+    g2.addColorStop(0,'rgba(30,10,120,.15)'); g2.addColorStop(1,'transparent');
+    ctx.fillStyle=g2; ctx.fillRect(0,0,W,H);
+    // stars
+    stars.forEach(s => {
+      s.x+=s.vx; s.y+=s.vy; s.a+=s.da;
+      if(s.x<0)s.x=W; if(s.x>W)s.x=0; if(s.y<0)s.y=H; if(s.y>H)s.y=0;
+      if(s.a<.1)s.da=Math.abs(s.da); if(s.a>1)s.da=-Math.abs(s.da);
+      ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2);
+      ctx.fillStyle=`rgba(200,210,255,${s.a.toFixed(2)})`; ctx.fill();
     });
-
-    // Estrellas
-    stars.forEach(s=>{
-      s.alpha+=s.dAlpha;
-      if(s.alpha>=1||s.alpha<=0.1) s.dAlpha*=-1;
-      s.y-=s.speed;
-      if(s.y<-2){s.y=H+2;s.x=Math.random()*W;}
-      ctx.beginPath();
-      ctx.arc(s.x,s.y,s.r,0,Math.PI*2);
-      ctx.fillStyle=`rgba(200,220,255,${s.alpha.toFixed(2)})`;
-      ctx.fill();
-    });
-
-    // Cometas
-    comets.forEach((c,i)=>{
-      if(!c.fading) c.alpha=Math.min(1,c.alpha+0.04); else c.alpha-=0.03;
-      if(c.alpha<=0){ comets[i]=_newComet(W,H); return; }
+    // comets
+    comets.forEach((c,i) => {
+      if(!c.fading) c.alpha=Math.min(1,c.alpha+.04); else c.alpha-=.03;
+      if(c.alpha<=0){ comets[i]=_newComet(); return; }
       c.x+=c.vx; c.y+=c.vy;
-      if(c.x>W+100) { c.fading=true; }
-      if(!c.fading && c.x>W*0.4) c.fading=true;
-      const g=ctx.createLinearGradient(c.x-c.len,c.y,c.x,c.y);
-      g.addColorStop(0,'transparent');
-      g.addColorStop(1,`rgba(200,220,255,${(c.alpha*0.9).toFixed(2)})`);
-      ctx.strokeStyle=g;ctx.lineWidth=1.5;
-      ctx.beginPath();ctx.moveTo(c.x-c.len,c.y);ctx.lineTo(c.x,c.y);ctx.stroke();
-      // cabeza brillante
-      ctx.beginPath();ctx.arc(c.x,c.y,2,0,Math.PI*2);
-      ctx.fillStyle=`rgba(255,255,255,${c.alpha.toFixed(2)})`;ctx.fill();
+      if(c.x>W*.5) c.fading=true;
+      const cg=ctx.createLinearGradient(c.x-c.len,c.y,c.x,c.y);
+      cg.addColorStop(0,'transparent'); cg.addColorStop(1,`rgba(200,220,255,${(c.alpha*.9).toFixed(2)})`);
+      ctx.strokeStyle=cg; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.moveTo(c.x-c.len,c.y); ctx.lineTo(c.x,c.y); ctx.stroke();
+      ctx.beginPath(); ctx.arc(c.x,c.y,2,0,Math.PI*2);
+      ctx.fillStyle=`rgba(255,255,255,${c.alpha.toFixed(2)})`; ctx.fill();
     });
-
     _raf = requestAnimationFrame(draw);
   }
   draw();
-  return ()=>cancelAnimationFrame(_raf);
+  return () => { cancelAnimationFrame(_raf); window.removeEventListener('resize',resize); };
 }
 
-/* ── HTML del Login Screen ── */
-const _HTML = `
-<div id="login-screen" style="position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;font-family:var(--fb);overflow:hidden;background:#04040e">
-  <scr\ipt>
-    // Ocultar login inmediatamente si ya hay sesión — evita flash de contenido
+/* ── Cuentas guardadas en localStorage ── */
+const _LS_KEY = 'codice_accounts_v2';
+function _loadAccounts() { try { return JSON.parse(localStorage.getItem(_LS_KEY)||'[]'); } catch { return []; } }
+function _saveAccounts(list) { try { localStorage.setItem(_LS_KEY, JSON.stringify(list)); } catch {} }
+function _upsertAccount(u) {
+  const list = _loadAccounts().filter(a => a.uid !== u.uid);
+  list.unshift({ uid:u.uid, email:u.email, displayName:u.displayName, photoURL:u.photoURL });
+  _saveAccounts(list.slice(0,5));
+}
+function _removeAccount(uid) { _saveAccounts(_loadAccounts().filter(a=>a.uid!==uid)); }
+
+/* ── Estado del login ── */
+let _lsPhase = 'home'; // home | email-login | register | forgot | check-email | loading
+let _lsEmailMode = 'verify'; // verify | reset
+let _lsPendingEmail = '';
+let _lsResendTimer = null, _lsResendSecs = 0;
+let _lsStopGalaxy = null;
+let _lsMusicEnabled = true;
+
+/* ── HTML base ── */
+const _LS_HTML = `
+<div id="login-screen" style="position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;font-family:var(--fb);overflow-y:auto;background:#04040e">
+  <script>
     try {
-      const _fbAuth = JSON.parse(localStorage.getItem('firebase:authUser:AIzaSyDLQ3dHp-YV-vObebnEXEssb50UDeheexM:[DEFAULT]') || 'null');
-      if(_fbAuth && _fbAuth.uid) {
-        document.getElementById('login-screen').style.display = 'none';
-      }
-    } catch(e) {}
+      const _fb = JSON.parse(localStorage.getItem('firebase:authUser:AIzaSyDLQ3dHp-YV-vObebnEXEssb50UDeheexM:[DEFAULT]')||'null');
+      if(_fb&&_fb.uid) document.getElementById('login-screen').style.display='none';
+    } catch(e){}
   <\/script>
-  <canvas id="login-galaxy-canvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></canvas>
-
-  <!-- Overlay morado galaxia -->
+  <canvas id="ls-galaxy" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></canvas>
   <div style="position:absolute;inset:0;pointer-events:none;
-    background:radial-gradient(ellipse 80% 70% at 30% 20%,rgba(80,30,160,.35),transparent),
-               radial-gradient(ellipse 60% 50% at 70% 80%,rgba(40,10,120,.4),transparent),
-               radial-gradient(ellipse 40% 40% at 50% 50%,rgba(30,10,80,.2),transparent)"></div>
-
-  <!-- Panel principal — se actualiza dinámicamente -->
-  <div id="login-panel-wrap" style="position:relative;z-index:2;width:min(480px,calc(100vw - 24px));max-height:90dvh;overflow-y:auto;scrollbar-width:none">
-    <!-- Llenado por JS -->
-  </div>
-
+    background:radial-gradient(ellipse 80% 70% at 30% 20%,rgba(80,20,160,.3),transparent),
+               radial-gradient(ellipse 60% 50% at 75% 80%,rgba(40,10,120,.35),transparent)"></div>
+  <div id="ls-wrap" style="position:relative;z-index:2;width:min(480px,calc(100vw - 20px));padding:16px 0 32px"></div>
   <style>
   #login-screen::-webkit-scrollbar{display:none}
-  .ls-card{
-    background:rgba(10,8,25,0.84);
-    backdrop-filter:blur(40px) saturate(200%);
-    -webkit-backdrop-filter:blur(40px) saturate(200%);
-    border:1px solid rgba(140,100,255,.18);
-    border-radius:28px;padding:36px 32px 30px;
-    box-shadow:0 0 0 1px rgba(140,100,255,.06) inset,
-               0 40px 100px rgba(0,0,0,.85),
-               0 0 80px rgba(80,30,180,.12);
-    animation:lsCardIn .5s cubic-bezier(.34,1.56,.64,1) forwards;
-  }
-  @keyframes lsCardIn{from{opacity:0;transform:translateY(24px) scale(.96)}to{opacity:1;transform:none}}
-  .ls-logo-ring{
-    width:68px;height:68px;border-radius:20px;
-    background:rgba(120,80,255,.08);border:1px solid rgba(120,80,255,.22);
-    display:flex;align-items:center;justify-content:center;
-    box-shadow:0 0 32px rgba(120,80,255,.22),0 0 0 8px rgba(120,80,255,.05);
-    animation:lsLogoPulse 3s ease-in-out infinite;
-  }
-  @keyframes lsLogoPulse{
-    0%,100%{box-shadow:0 0 32px rgba(120,80,255,.22),0 0 0 8px rgba(120,80,255,.05)}
-    50%{box-shadow:0 0 48px rgba(140,100,255,.38),0 0 0 14px rgba(120,80,255,.09)}
-  }
-  .ls-title{
-    font-family:var(--fd);font-size:2.2rem;font-weight:800;letter-spacing:-2px;text-align:center;
-    background:linear-gradient(145deg,#fff 0%,#b8a8ff 40%,#9060ff 70%,#c080ff 100%);
-    -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
-    filter:drop-shadow(0 0 36px rgba(140,80,255,.45));margin-bottom:4px;
-  }
-  .ls-sub{font-size:.67rem;letter-spacing:.3em;color:var(--t2);text-transform:uppercase;font-weight:500;text-align:center}
-  .ls-divider{height:1px;background:rgba(120,80,255,.15);margin:22px 0}
-  .ls-google-btn{
-    width:100%;display:flex;align-items:center;justify-content:center;gap:10px;
-    padding:13px 20px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
-    border-radius:14px;color:var(--t0);font-family:var(--fb);font-size:.9rem;font-weight:600;
-    cursor:pointer;transition:all 200ms ease;position:relative;overflow:hidden;
-  }
-  .ls-google-btn:hover{background:rgba(255,255,255,.1);border-color:rgba(140,100,255,.35);transform:translateY(-1px);box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(140,100,255,.2)}
-  .ls-google-btn:active{transform:scale(.98)}
-  .ls-account-btn{
-    width:100%;display:flex;align-items:center;gap:12px;padding:11px 14px;
-    background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);
-    border-radius:14px;cursor:pointer;transition:all 180ms ease;text-align:left;
-    color:var(--t0);font-family:var(--fb);
-  }
-  .ls-account-btn:hover{background:rgba(140,100,255,.1);border-color:rgba(140,100,255,.25);transform:translateX(3px)}
-  .ls-account-btn.selected{background:rgba(140,100,255,.15);border-color:rgba(140,100,255,.4);box-shadow:0 0 0 1px rgba(140,100,255,.2) inset}
-  .ls-avatar{width:38px;height:38px;border-radius:50%;object-fit:cover;background:rgba(120,80,255,.2);flex-shrink:0;border:1.5px solid rgba(120,80,255,.3)}
-  .ls-avatar-placeholder{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,rgba(120,80,255,.3),rgba(80,40,200,.3));display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;border:1.5px solid rgba(120,80,255,.3)}
-  .ls-acct-name{font-size:.87rem;font-weight:600;color:var(--t0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .ls-acct-email{font-size:.72rem;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .ls-acct-lock{font-size:.8rem;color:var(--t2);flex-shrink:0;margin-left:auto}
-  .ls-enter-btn{
-    width:100%;padding:13px;border-radius:14px;border:none;cursor:pointer;font-family:var(--fd);font-size:1rem;font-weight:700;letter-spacing:.03em;
-    background:linear-gradient(135deg,#7040ff,#9060cc);color:#fff;
-    box-shadow:0 4px 24px rgba(100,40,255,.4);transition:all 200ms ease;
-  }
-  .ls-enter-btn:hover{box-shadow:0 6px 32px rgba(120,60,255,.55);transform:translateY(-1px)}
-  .ls-enter-btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
-  .ls-back-btn-sm{width:100%;padding:8px;background:none;border:none;color:var(--t2);font-family:var(--fb);font-size:.8rem;cursor:pointer;margin-top:8px;transition:color 200ms}
-  .ls-back-btn-sm:hover{color:var(--t0)}
-  .ls-pin-input{
-    width:100%;padding:12px 16px;background:rgba(255,255,255,.05);border:1px solid rgba(120,80,255,.2);
-    border-radius:12px;color:var(--t0);font-family:var(--fm);font-size:1.1rem;letter-spacing:.25em;
-    text-align:center;outline:none;transition:border-color 200ms;
-  }
-  .ls-pin-input:focus{border-color:rgba(120,80,255,.5);box-shadow:0 0 0 3px rgba(120,80,255,.12)}
-  @media(max-width:768px){.ls-pin-input{font-size:max(1.1rem,16px)}}
-  .ls-spinner{width:32px;height:32px;border-radius:50%;border:2px solid rgba(120,80,255,.2);border-top-color:#9060ff;animation:spin .8s linear infinite;margin:0 auto}
-  .ls-music-btn{position:absolute;top:16px;right:16px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:99px;padding:6px 12px;font-size:.72rem;color:var(--t2);cursor:pointer;z-index:10;transition:all 180ms;font-family:var(--fb)}
-  .ls-music-btn:hover{background:rgba(255,255,255,.1);color:var(--t0)}
-  .ls-pin-dot{width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,.15);border:1.5px solid rgba(120,80,255,.3);display:inline-block;margin:0 4px;transition:all 180ms}
-  .ls-pin-dot.filled{background:rgba(120,80,255,.7);border-color:rgba(140,100,255,.6);box-shadow:0 0 8px rgba(120,80,255,.4)}
-  .ls-keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
-  .ls-key{padding:14px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:12px;font-size:1.1rem;font-weight:600;color:var(--t0);cursor:pointer;font-family:var(--fb);transition:all 120ms;text-align:center}
-  .ls-key:hover{background:rgba(120,80,255,.15);border-color:rgba(120,80,255,.3)}
-  .ls-key:active{transform:scale(.93);background:rgba(120,80,255,.25)}
+  .ls-card{background:rgba(8,6,20,.88);backdrop-filter:blur(48px) saturate(200%);-webkit-backdrop-filter:blur(48px) saturate(200%);border:1px solid rgba(130,90,255,.2);border-radius:28px;padding:38px 34px 32px;box-shadow:0 0 0 1px rgba(130,90,255,.07) inset,0 48px 120px rgba(0,0,0,.9),0 0 100px rgba(80,20,180,.15);animation:lsIn .5s cubic-bezier(.34,1.56,.64,1) forwards}
+  @keyframes lsIn{from{opacity:0;transform:translateY(24px) scale(.96)}to{opacity:1;transform:none}}
+  .ls-ring{width:70px;height:70px;border-radius:20px;background:rgba(110,70,255,.09);border:1px solid rgba(120,80,255,.24);display:flex;align-items:center;justify-content:center;box-shadow:0 0 36px rgba(110,70,255,.24),0 0 0 10px rgba(110,70,255,.05);animation:lsPulse 3s ease-in-out infinite;margin:0 auto 16px}
+  @keyframes lsPulse{0%,100%{box-shadow:0 0 36px rgba(110,70,255,.24),0 0 0 10px rgba(110,70,255,.05)}50%{box-shadow:0 0 52px rgba(130,90,255,.4),0 0 0 16px rgba(110,70,255,.09)}}
+  .ls-brand{font-family:var(--fd);font-size:2.3rem;font-weight:800;letter-spacing:-2px;text-align:center;background:linear-gradient(145deg,#fff 0%,#c0aaff 40%,#8050ff 70%,#d090ff 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;filter:drop-shadow(0 0 40px rgba(140,80,255,.5));margin-bottom:4px}
+  .ls-tagline{font-size:.67rem;letter-spacing:.32em;color:rgba(160,140,220,.6);text-transform:uppercase;font-weight:500;text-align:center;margin-bottom:0}
+  .ls-divider{height:1px;background:linear-gradient(90deg,transparent,rgba(120,80,255,.2),transparent);margin:22px 0}
+  .ls-phase-title{font-size:1rem;font-weight:700;color:var(--t0);text-align:center;margin-bottom:6px}
+  .ls-phase-sub{font-size:.8rem;color:var(--t2);text-align:center;line-height:1.6;margin-bottom:20px}
+  /* Inputs */
+  .ls-field{display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
+  .ls-label{font-size:.72rem;font-weight:700;color:rgba(160,140,220,.7);text-transform:uppercase;letter-spacing:.07em}
+  .ls-input{width:100%;padding:12px 15px;background:rgba(255,255,255,.05);border:1px solid rgba(120,80,255,.18);border-radius:12px;color:var(--t0);font-family:var(--fb);font-size:.9rem;outline:none;transition:border-color 200ms,box-shadow 200ms;box-sizing:border-box}
+  .ls-input:focus{border-color:rgba(130,90,255,.55);box-shadow:0 0 0 3px rgba(110,70,255,.14)}
+  .ls-input::placeholder{color:rgba(120,100,180,.45)}
+  .ls-input:-webkit-autofill,.ls-input:-webkit-autofill:focus{-webkit-box-shadow:0 0 0 1000px #0d0820 inset!important;-webkit-text-fill-color:var(--t0)!important}
+  .ls-input.err{border-color:rgba(255,80,80,.5);box-shadow:0 0 0 3px rgba(255,60,60,.1)}
+  .ls-pass-wrap{position:relative}
+  .ls-pass-wrap .ls-input{padding-right:42px}
+  .ls-eye{position:absolute;right:11px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:rgba(140,120,200,.5);padding:4px;transition:color 180ms;display:flex}
+  .ls-eye:hover{color:rgba(170,150,230,.9)}
+  /* Fortaleza */
+  .ls-sbar{height:3px;border-radius:2px;background:rgba(255,255,255,.07);overflow:hidden;margin-top:7px}
+  .ls-sfill{height:100%;border-radius:2px;width:0;transition:width 300ms,background 300ms}
+  .ls-stxt{font-size:.7rem;margin-top:4px}
+  .ls-match{font-size:.71rem;margin-top:4px}
+  /* Botones */
+  .ls-btn-main{width:100%;padding:14px;background:linear-gradient(135deg,#6830ff,#9060cc);border:none;border-radius:14px;color:#fff;font-family:var(--fd);font-size:.95rem;font-weight:700;letter-spacing:.02em;cursor:pointer;transition:all 200ms;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 28px rgba(90,40,220,.45)}
+  .ls-btn-main:hover{box-shadow:0 6px 36px rgba(110,60,240,.6);transform:translateY(-1px)}
+  .ls-btn-main:active{transform:scale(.98)}
+  .ls-btn-main:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+  .ls-btn-sec{width:100%;padding:12px;background:rgba(255,255,255,.05);border:1px solid rgba(120,80,255,.2);border-radius:14px;color:var(--t1);font-family:var(--fb);font-size:.88rem;font-weight:600;cursor:pointer;transition:all 180ms;margin-top:10px}
+  .ls-btn-sec:hover{background:rgba(120,80,255,.12);border-color:rgba(140,100,255,.35);color:var(--t0)}
+  .ls-btn-ghost{width:100%;padding:9px;background:none;border:none;color:rgba(140,120,200,.55);font-family:var(--fb);font-size:.8rem;cursor:pointer;transition:color 180ms;margin-top:8px}
+  .ls-btn-ghost:hover{color:var(--t1)}
+  .ls-link{background:none;border:none;color:rgba(160,130,255,.8);font-family:var(--fb);font-size:.78rem;cursor:pointer;padding:0;text-decoration:underline;text-underline-offset:3px;transition:opacity 180ms}
+  .ls-link:hover{opacity:.7}
+  .ls-link:disabled{opacity:.35;cursor:not-allowed}
+  /* Error inline */
+  .ls-err{background:rgba(255,70,70,.09);border:1px solid rgba(255,80,80,.22);border-radius:10px;padding:10px 13px;font-size:.79rem;color:#ff8080;line-height:1.45;margin-top:2px;display:none}
+  .ls-err.show{display:block}
+  /* Spinner en botón */
+  .ls-bspin{width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;animation:spin .7s linear infinite;flex-shrink:0}
+  /* Accounts */
+  .ls-acct{width:100%;display:flex;align-items:center;gap:10px;padding:11px 13px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;cursor:pointer;transition:all 180ms;text-align:left;font-family:var(--fb);color:var(--t0);margin-bottom:8px}
+  .ls-acct:hover{background:rgba(120,80,255,.1);border-color:rgba(130,90,255,.28);transform:translateX(2px)}
+  .ls-acct.sel{background:rgba(120,80,255,.15);border-color:rgba(140,100,255,.45);box-shadow:0 0 0 1px rgba(140,100,255,.2) inset}
+  .ls-ava{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,rgba(110,70,255,.3),rgba(80,40,200,.3));display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;border:1.5px solid rgba(120,80,255,.3)}
+  /* Mail icon */
+  .ls-mail-ico{width:68px;height:68px;border-radius:20px;background:rgba(110,70,255,.09);border:1px solid rgba(120,80,255,.22);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;box-shadow:0 0 36px rgba(110,70,255,.2)}
+  /* Music btn */
+  .ls-music{position:absolute;top:14px;right:14px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:99px;padding:6px 12px;font-size:.7rem;color:var(--t2);cursor:pointer;z-index:10;transition:all 180ms;font-family:var(--fb)}
+  .ls-music:hover{background:rgba(255,255,255,.1);color:var(--t0)}
+  /* Spinner pantalla */
+  .ls-spin{width:34px;height:34px;border-radius:50%;border:2px solid rgba(120,80,255,.2);border-top-color:#9060ff;animation:spin .8s linear infinite;margin:0 auto}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .ls-legal{text-align:center;font-size:.65rem;color:rgba(120,100,160,.45);margin-top:14px;line-height:1.5}
+  @media(max-width:480px){.ls-card{padding:30px 22px 26px;border-radius:22px}}
+  @media(max-width:480px){.ls-input{font-size:max(.9rem,16px)}}
   </style>
-</div>
-`;
+</div>`;
 
-/* ── Estado interno del Login ── */
-let _lsPhase = 'accounts'; // 'accounts' | 'pin' | 'newPin' | 'loading' | 'error'
-let _lsSelectedAccount = null;
-let _lsPin = '';
-let _lsMusicEnabled = true;
-let _lsStopGalaxy = null;
-
-function _lsMount(){
-  if(document.getElementById('login-screen')) {
-    // Already mounted — re-attach galaxy if stopped and always render panel
-    const canvas=document.getElementById('login-galaxy-canvas');
-    if(canvas && !_lsStopGalaxy){ _lsStopGalaxy=_startGalaxyCanvas(canvas); }
-    // Panel wrap may be empty (first show, or after _lsHide cleared it)
-    const wrap=document.getElementById('login-panel-wrap');
-    if(wrap && !wrap.querySelector('.ls-card')){ _lsRender(); }
-    return;
-  }
-  const wrap=document.createElement('div');
-  wrap.innerHTML=_HTML;
-  document.body.appendChild(wrap);
-  // Galaxy canvas
-  const canvas = document.getElementById('login-galaxy-canvas');
-  if(canvas) _lsStopGalaxy = _startGalaxyCanvas(canvas);
-  // Music on first user interaction
-  document.getElementById('login-screen').addEventListener('click', _lsOnFirstClick, {once:true});
+/* ── Montar ── */
+function _lsMount() {
+  if (document.getElementById('login-screen')) { _lsRender(); return; }
+  const d = document.createElement('div');
+  d.innerHTML = _LS_HTML;
+  document.body.appendChild(d);
+  const canvas = document.getElementById('ls-galaxy');
+  if (canvas) _lsStopGalaxy = _startGalaxyCanvas(canvas);
+  document.getElementById('login-screen')?.addEventListener('click', () => {
+    if (_lsMusicEnabled && !_loginMusicPlaying) _startLoginMusic();
+  }, { once: true });
   _lsRender();
 }
 
-function _lsOnFirstClick(){
-  if(_lsMusicEnabled && !_loginMusicPlaying) _startLoginMusic();
+/* ── Helpers DOM ── */
+const $  = id => document.getElementById(id);
+const $q = s  => document.querySelector(s);
+
+function _setErr(id, msg) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = msg || '';
+  el.classList.toggle('show', !!msg);
+}
+function _setBusy(btnId, txtId, spinId, busy, label) {
+  const btn = $(btnId), txt = $(txtId), sp = $(spinId);
+  if (btn) btn.disabled = busy;
+  if (txt && label) txt.textContent = label;
+  if (sp) sp.style.display = busy ? '' : 'none';
 }
 
-function _lsRender(){
-  const wrap = document.getElementById('login-panel-wrap');
-  if(!wrap) return;
+/* ── Fortaleza contraseña ── */
+function _strength(val) {
+  let s = 0;
+  if (val.length >= 6) s++;
+  if (val.length >= 10) s++;
+  if (/[A-Z]/.test(val)) s++;
+  if (/[0-9]/.test(val)) s++;
+  if (/[^A-Za-z0-9]/.test(val)) s++;
+  return [
+    { w:'20%', c:'#ff5555', t:'Muy débil' },
+    { w:'40%', c:'#ff9040', t:'Débil' },
+    { w:'60%', c:'#ffd040', t:'Regular' },
+    { w:'80%', c:'#60e880', t:'Buena' },
+    { w:'100%',c:'#a080ff', t:'Muy fuerte' },
+  ][Math.max(0,s-1)];
+}
+
+/* ── Toggle ojo ── */
+function _eye(btnId, inpId) {
+  const btn = $(btnId), inp = $(inpId);
+  if (!btn || !inp) return;
+  const SVG_OPEN  = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+  const SVG_CLOSE = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+  btn.innerHTML = SVG_OPEN;
+  btn.addEventListener('click', () => {
+    const show = inp.type === 'password';
+    inp.type = show ? 'text' : 'password';
+    btn.innerHTML = show ? SVG_CLOSE : SVG_OPEN;
+  });
+}
+
+/* ── Enter en input ── */
+function _enter(inpId, fn) {
+  $(inpId)?.addEventListener('keydown', e => { if(e.key==='Enter') fn(); });
+}
+
+/* ── Cooldown reenvío ── */
+function _startCooldown(btnId, cdId, secs) {
+  _lsResendSecs = secs;
+  const btn=$(btnId), cd=$(cdId);
+  if(btn) btn.disabled = true;
+  if(cd) { cd.style.display=''; cd.textContent=`Reenviar en ${secs}s`; }
+  clearInterval(_lsResendTimer);
+  _lsResendTimer = setInterval(()=>{
+    _lsResendSecs--;
+    if(_lsResendSecs<=0){
+      clearInterval(_lsResendTimer);
+      if(btn) btn.disabled=false;
+      if(cd) cd.style.display='none';
+    } else { if(cd) cd.textContent=`Reenviar en ${_lsResendSecs}s`; }
+  },1000);
+}
+
+/* ── Toast ── */
+function _toast(msg, color='rgba(130,90,255,.8)') {
+  if(window.Toast?.show){ window.Toast.show(msg); return; }
+  const t=document.createElement('div');
+  t.textContent=msg;
+  t.style.cssText=`position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:rgba(10,8,24,.97);color:#fff;padding:11px 20px;border-radius:12px;font-size:.8rem;z-index:99999;pointer-events:none;border:1px solid ${color};box-shadow:0 4px 24px rgba(0,0,0,.5);max-width:calc(100vw - 32px);text-align:center;font-family:var(--fb)`;
+  document.body.appendChild(t);
+  setTimeout(()=>t.remove(),3500);
+}
+
+/* ══════════════ RENDER ══════════════ */
+function _lsRender() {
+  const wrap = $('ls-wrap');
+  if (!wrap) return;
   const accounts = _loadAccounts();
 
-  if(_lsPhase === 'accounts'){
+  if (_lsPhase === 'home') {
     wrap.innerHTML = `
-    <div class="ls-card">
-      <button class="ls-music-btn" id="ls-music-toggle">${_lsMusicEnabled?'🔊 Música':'🔇 Mute'}</button>
-      <div style="display:flex;justify-content:center;margin-bottom:18px">
-        <div class="ls-logo-ring">
-          <svg width="38" height="38" viewBox="0 0 36 36" fill="none">
-            <rect x="6" y="6" width="10" height="10" rx="2" fill="var(--ac)" opacity=".9"/>
-            <rect x="20" y="6" width="10" height="10" rx="2" fill="var(--purple)" opacity=".7"/>
-            <rect x="6" y="20" width="10" height="10" rx="2" fill="var(--cyan)" opacity=".6"/>
-            <rect x="20" y="20" width="10" height="10" rx="2" fill="var(--ac)" opacity=".5"/>
-          </svg>
-        </div>
-      </div>
-      <h1 class="ls-title">CÓDICE</h1>
-      <p class="ls-sub">Sistema Operativo de Estudio IA</p>
-      <div class="ls-divider"></div>
-      ${accounts.length ? `
-        <p style="font-size:.75rem;color:var(--t2);margin-bottom:12px;font-weight:600;text-transform:uppercase;letter-spacing:.08em">Cuentas registradas</p>
-        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
-          ${accounts.map((a,i)=>`
-          <div class="ls-account-row" data-uid="${a.uid}" data-idx="${i}" style="display:flex;align-items:center;gap:6px;width:100%">
-            <button class="ls-account-btn${_lsSelectedAccount===a.uid?' selected':''}" data-uid="${a.uid}" data-idx="${i}" style="flex:1;min-width:0">
-              ${a.photoURL?`<img class="ls-avatar" src="${a.photoURL}" onerror="this.style.display='none';this.nextSibling.style.display='flex'" alt="${a.displayName}"/><div class="ls-avatar-placeholder" style="display:none">👤</div>`:`<div class="ls-avatar-placeholder">👤</div>`}
-              <div style="flex:1;min-width:0">
-                <div class="ls-acct-name">${a.displayName||'Usuario'}</div>
-                <div class="ls-acct-email">${a.email||''}</div>
-              </div>
-              <span class="ls-acct-lock">${_getPin(a.uid)?'🔒':''}</span>
-            </button>
-            <button class="ls-signout-btn" data-uid="${a.uid}" title="Cerrar sesión de esta cuenta" style="flex-shrink:0;background:rgba(255,95,95,.1);border:1px solid rgba(255,95,95,.2);border-radius:10px;padding:7px 10px;color:rgba(255,120,120,.8);font-family:var(--fb);font-size:.72rem;font-weight:600;cursor:pointer;white-space:nowrap;transition:all 180ms ease;display:flex;align-items:center;gap:4px" onmouseenter="this.style.background='rgba(255,95,95,.2)';this.style.color='#ff7070'" onmouseleave="this.style.background='rgba(255,95,95,.1)';this.style.color='rgba(255,120,120,.8)'">
-              <span style="font-size:.8rem">⟵</span> Salir
-            </button>
-          </div>`).join('')}
-        </div>
-        <button class="ls-enter-btn" id="ls-enter-btn" ${_lsSelectedAccount?'':'disabled'}>Entrar →</button>
-        <div class="ls-divider"></div>
-      `:``}
-      <button class="ls-email-btn" id="ls-email-btn" style="width:100%;padding:12px 20px;background:var(--ac);border:none;border-radius:12px;color:#fff;font-family:var(--fb);font-size:.9rem;font-weight:700;cursor:pointer;margin-bottom:10px;transition:all 200ms">
-        ✉️ ${accounts.length ? 'Añadir cuenta con email' : 'Continuar con email'}
-      </button>
-      ${!window.Capacitor?.isNativePlatform?.() ? `
-      <div style="text-align:center;position:relative;margin:4px 0 10px">
-        <div style="position:absolute;top:50%;left:0;right:0;height:1px;background:var(--b0)"></div>
-        <span style="position:relative;background:rgba(14,14,26,0.92);padding:0 10px;font-size:.72rem;color:var(--t2)">o</span>
-      </div>
-      <button class="ls-google-btn" id="ls-google-btn">
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-          <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615Z" fill="#4285F4"/>
-          <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18Z" fill="#34A853"/>
-          <path d="M3.964 10.706A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.706V4.962H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.038l3.007-2.332Z" fill="#FBBC05"/>
-          <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.962L3.964 7.294C4.672 5.163 6.656 3.58 9 3.58Z" fill="#EA4335"/>
+    <div class="ls-card" style="position:relative">
+      <button class="ls-music" id="ls-music-btn">${_lsMusicEnabled?'🔊':'🔇'}</button>
+      <div class="ls-ring">
+        <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+          <rect x="6"  y="6"  width="10" height="10" rx="2" fill="var(--ac)"     opacity=".9"/>
+          <rect x="20" y="6"  width="10" height="10" rx="2" fill="var(--purple)" opacity=".7"/>
+          <rect x="6"  y="20" width="10" height="10" rx="2" fill="var(--cyan)"   opacity=".6"/>
+          <rect x="20" y="20" width="10" height="10" rx="2" fill="var(--ac)"     opacity=".5"/>
         </svg>
-        ${accounts.length ? 'Añadir cuenta con Google' : 'Continuar con Google'}
-      </button>` : ''}
-      <p style="text-align:center;font-size:.67rem;color:var(--t2);margin-top:14px;line-height:1.5">
-        Al iniciar, aceptas que tus datos se guardan en Firebase asociados a tu cuenta.
-      </p>
+      </div>
+      <h1 class="ls-brand">CÓDICE</h1>
+      <p class="ls-tagline">Sistema Operativo de Estudio IA</p>
+      <div class="ls-divider"></div>
+
+      ${accounts.length ? `
+        <p style="font-size:.72rem;color:rgba(140,120,200,.6);font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Continuar como</p>
+        ${accounts.map(a=>`
+          <button class="ls-acct" data-uid="${a.uid}">
+            <div class="ls-ava">👤</div>
+            <div style="flex:1;min-width:0;text-align:left">
+              <div style="font-size:.87rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.displayName||'Usuario'}</div>
+              <div style="font-size:.72rem;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.email||''}</div>
+            </div>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(140,110,220,.5)" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+          </button>
+        `).join('')}
+        <div class="ls-divider"></div>
+      ` : ''}
+
+      <button class="ls-btn-main" id="ls-go-login">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        Iniciar sesión con correo
+      </button>
+      <button class="ls-btn-sec" id="ls-go-register">Crear cuenta nueva</button>
+
+      <p class="ls-legal">Al continuar aceptas que tus datos se guardan en Firebase asociados a tu cuenta.</p>
       <p style="text-align:center;margin-top:10px">
-        <a href="#" style="font-size:.65rem;color:rgba(140,100,255,.45);text-decoration:none" onclick="event.preventDefault();(async()=>{try{const ks=await caches.keys();await Promise.all(ks.map(k=>caches.delete(k)));const rs=await navigator.serviceWorker.getRegistrations();await Promise.all(rs.map(r=>r.unregister()));location.reload();}catch(e){location.reload();}})()">¿Pantalla en blanco? Limpiar caché</a>
+        <a href="#" style="font-size:.63rem;color:rgba(130,100,200,.35);text-decoration:none" onclick="event.preventDefault();(async()=>{try{const ks=await caches.keys();await Promise.all(ks.map(k=>caches.delete(k)));const rs=await navigator.serviceWorker?.getRegistrations?.();if(rs)await Promise.all(rs.map(r=>r.unregister()));location.reload();}catch{location.reload()}})()">¿Pantalla en blanco? Limpiar caché</a>
       </p>
     </div>`;
 
-    // Events
-    document.getElementById('ls-music-toggle')?.addEventListener('click',(e)=>{
-      e.stopPropagation();
-      _lsMusicEnabled=!_lsMusicEnabled;
+    $('ls-music-btn')?.addEventListener('click', e=>{
+      e.stopPropagation(); _lsMusicEnabled=!_lsMusicEnabled;
       if(_lsMusicEnabled) _startLoginMusic(); else _stopLoginMusic();
       _lsRender();
     });
-    document.getElementById('ls-email-btn')?.addEventListener('click', e => {
-      if(_lsMusicEnabled && !_loginMusicPlaying) { try { _startLoginMusic(); } catch(err) {} }
-      _lsPhase='emailLogin'; _lsRender();
-    });
-    document.getElementById('ls-google-btn')?.addEventListener('click', e => {
-      // Activar música al tocar el botón (primer gesto del usuario)
-      if(_lsMusicEnabled && !_loginMusicPlaying) { try { _startLoginMusic(); } catch(err) {} }
-      _lsHandleGoogle(e);
-    });
-    document.getElementById('ls-enter-btn')?.addEventListener('click',_lsEnterAccount);
-    wrap.querySelectorAll('.ls-account-btn').forEach(btn=>{
-      btn.addEventListener('click',()=>{
-        _lsSelectedAccount = btn.dataset.uid;
-        try{ SoundFX.play('click'); }catch(e){}
-        _lsRender();
-      });
-    });
-    wrap.querySelectorAll('.ls-signout-btn').forEach(btn=>{
-      btn.addEventListener('click',(e)=>{
-        e.stopPropagation();
-        const uid = btn.dataset.uid;
-        try{ SoundFX.play('closePop'); }catch(e){}
-        // Remove from saved accounts and local pin
-        const list = _loadAccounts().filter(a=>a.uid!==uid);
-        _saveAccounts(list);
-        _removePin(uid);
-        if(_lsSelectedAccount===uid) _lsSelectedAccount=null;
-        _lsRender();
+    $('ls-go-login')?.addEventListener('click', ()=>{ _lsPhase='email-login'; _lsRender(); });
+    $('ls-go-register')?.addEventListener('click', ()=>{ _lsPhase='register'; _lsRender(); });
+    wrap.querySelectorAll('.ls-acct').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        // Click en cuenta guardada → ir directo al login con email prellenado
+        const accts = _loadAccounts();
+        const a = accts.find(x=>x.uid===btn.dataset.uid);
+        if(a){ _lsPhase='email-login'; _lsRender(); setTimeout(()=>{ const i=$('li-email'); if(i) i.value=a.email; },10); }
       });
     });
 
-  } else if(_lsPhase === 'pin'){
-    const accts = _loadAccounts();
-    const acct = accts.find(a=>a.uid===_lsSelectedAccount)||{};
-    wrap.innerHTML=`
+  } else if (_lsPhase === 'email-login') {
+    wrap.innerHTML = `
     <div class="ls-card">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px">
-        <button id="ls-back-btn" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:99px;padding:7px 14px;color:var(--t1);font-family:var(--fb);font-size:.8rem;cursor:pointer">← Volver</button>
-        <span style="font-size:.85rem;color:var(--t1)">Ingresa tu PIN para entrar</span>
-      </div>
-      <div style="display:flex;justify-content:center;margin-bottom:8px">
-        ${acct.photoURL?`<img style="width:52px;height:52px;border-radius:50%;object-fit:cover;border:2px solid rgba(120,80,255,.3)" src="${acct.photoURL}" alt="${acct.displayName}" onerror="this.style.display='none'"/>`:``}
-      </div>
-      <p style="text-align:center;font-size:.95rem;font-weight:600;color:var(--t0);margin-bottom:4px">${acct.displayName||'Usuario'}</p>
-      <p style="text-align:center;font-size:.75rem;color:var(--t2);margin-bottom:24px">${acct.email||''}</p>
-      <div style="display:flex;justify-content:center;gap:8px;margin-bottom:20px" id="ls-pin-dots">
-        <span class="ls-pin-dot"></span><span class="ls-pin-dot"></span><span class="ls-pin-dot"></span><span class="ls-pin-dot"></span>
-      </div>
-      <div class="ls-keypad">
-        ${[1,2,3,4,5,6,7,8,9,'','0','⌫'].map(k=>`<button class="ls-key" data-key="${k}">${k}</button>`).join('')}
-      </div>
-      <p id="ls-pin-error" style="text-align:center;font-size:.78rem;color:var(--red);margin-top:12px;min-height:20px"></p>
-      <button id="ls-forgot-pin" style="display:block;margin:6px auto 0;background:none;border:none;color:var(--t2);font-size:.72rem;cursor:pointer;font-family:var(--fb);text-decoration:underline">Olvidé mi PIN (usar Google)</button>
-    </div>`;
-    _lsPin='';
-    document.getElementById('ls-back-btn')?.addEventListener('click',()=>{_lsPhase='accounts';_lsSelectedAccount=null;_lsRender();});
-    document.getElementById('ls-forgot-pin')?.addEventListener('click',()=>{_removePin(_lsSelectedAccount);_lsHandleGoogle();});
-    wrap.querySelectorAll('.ls-key').forEach(k=>{
-      k.addEventListener('click',()=>{
-        const key=k.dataset.key;
-        if(key==='⌫'){_lsPin=_lsPin.slice(0,-1);}
-        else if(_lsPin.length<4&&key!==''){_lsPin+=key;}
-        _lsUpdatePinDots();
-        if(_lsPin.length===4) setTimeout(_lsCheckPin,120);
-      });
-    });
+      <p class="ls-phase-title">Iniciar sesión</p>
+      <p class="ls-phase-sub">Ingresa tu correo y contraseña de CÓDICE.</p>
 
-  } else if(_lsPhase === 'newPin'){
-    wrap.innerHTML=`
+      <div class="ls-field">
+        <label class="ls-label" for="li-email">Correo electrónico</label>
+        <input id="li-email" type="email" class="ls-input" placeholder="tu@correo.com" autocomplete="email"/>
+      </div>
+      <div class="ls-field">
+        <label class="ls-label" for="li-pass">Contraseña</label>
+        <div class="ls-pass-wrap">
+          <input id="li-pass" type="password" class="ls-input" placeholder="••••••••" autocomplete="current-password"/>
+          <button id="li-eye" class="ls-eye" tabindex="-1"></button>
+        </div>
+      </div>
+      <button class="ls-link" id="li-forgot" style="display:block;text-align:right;margin:-6px 0 14px">¿Olvidaste tu contraseña?</button>
+      <div id="li-err" class="ls-err"></div>
+
+      <button class="ls-btn-main" id="li-submit" style="margin-top:14px">
+        <span id="li-txt">Entrar</span>
+        <span id="li-spin" class="ls-bspin" style="display:none"></span>
+      </button>
+      <button class="ls-btn-ghost" id="li-back">← Volver</button>
+    </div>`;
+
+    _eye('li-eye','li-pass');
+    _enter('li-email', _doLogin); _enter('li-pass', _doLogin);
+    $('li-forgot')?.addEventListener('click', ()=>{ _lsPhase='forgot'; _lsRender(); });
+    $('li-back')?.addEventListener('click',   ()=>{ _lsPhase='home';   _lsRender(); });
+    $('li-submit')?.addEventListener('click', _doLogin);
+    setTimeout(()=>$('li-email')?.focus(), 80);
+
+  } else if (_lsPhase === 'register') {
+    wrap.innerHTML = `
     <div class="ls-card">
-      <h2 style="font-family:var(--fd);font-size:1.3rem;font-weight:700;color:var(--t0);text-align:center;margin-bottom:8px">Crear PIN de acceso</h2>
-      <p style="text-align:center;font-size:.82rem;color:var(--t1);margin-bottom:20px;line-height:1.5">Protege tu sesión con un PIN de 4 dígitos.<br>Puedes usar números y letras.</p>
-      <div style="display:flex;justify-content:center;gap:8px;margin-bottom:20px" id="ls-pin-dots">
-        <span class="ls-pin-dot"></span><span class="ls-pin-dot"></span><span class="ls-pin-dot"></span><span class="ls-pin-dot"></span>
-      </div>
-      <input id="ls-pin-text" class="ls-pin-input" type="password" maxlength="4" placeholder="•••• " autocomplete="off" inputmode="numeric"/>
-      <div class="ls-keypad" style="margin-top:10px">
-        ${[1,2,3,4,5,6,7,8,9,'','0','⌫'].map(k=>`<button class="ls-key" data-key="${k}">${k}</button>`).join('')}
-      </div>
-      <div style="display:flex;gap:10px;margin-top:18px">
-        <button id="ls-skip-pin" style="flex:1;padding:12px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:12px;color:var(--t1);font-family:var(--fb);cursor:pointer;font-size:.85rem">Sin PIN</button>
-        <button id="ls-save-pin" class="ls-enter-btn" style="flex:2" disabled>Guardar PIN</button>
-      </div>
-    </div>`;
-    _lsPin='';
-    document.getElementById('ls-skip-pin')?.addEventListener('click',()=>{ _lsFinishLogin(null); });
-    document.getElementById('ls-save-pin')?.addEventListener('click',()=>{
-      if(_lsPin.length>=1){ _setPin(_lsSelectedAccount,_lsPin); _lsFinishLogin(null); }
-    });
-    const pinText = document.getElementById('ls-pin-text');
-    pinText?.addEventListener('input',()=>{ _lsPin=pinText.value; _lsUpdatePinDots(); _lsSavePinToggle(); });
-    wrap.querySelectorAll('.ls-key').forEach(k=>{
-      k.addEventListener('click',()=>{
-        const key=k.dataset.key;
-        if(key==='⌫'){_lsPin=_lsPin.slice(0,-1);if(pinText)pinText.value=_lsPin;}
-        else if(_lsPin.length<4&&key!==''){_lsPin+=key;if(pinText)pinText.value=_lsPin;}
-        _lsUpdatePinDots(); _lsSavePinToggle();
-      });
-    });
+      <p class="ls-phase-title">Crear cuenta</p>
+      <p class="ls-phase-sub">Es gratis. Solo necesitas tu correo.</p>
 
-  } else if(_lsPhase==='emailLogin'){
-    _lsRenderEmailLogin(wrap); return;
-  } else if(_lsPhase==='register'){
-    _lsRenderRegister(wrap); return;
-  } else if(_lsPhase==='verify'){
-    _lsRenderVerify(wrap); return;
-  } else if(_lsPhase==='forgot'){
-    _lsRenderForgot(wrap); return;
-  } else if(_lsPhase === 'loading'){
-    wrap.innerHTML=`
-    <div class="ls-card" style="text-align:center;padding:48px 32px">
-      <div class="ls-spinner"></div>
-      <p style="font-size:.85rem;color:var(--t2);margin-top:20px" id="ls-load-msg">Iniciando sesión…</p>
+      <div class="ls-field">
+        <label class="ls-label" for="rg-name">Nombre (opcional)</label>
+        <input id="rg-name" type="text" class="ls-input" placeholder="Tu nombre" autocomplete="name"/>
+      </div>
+      <div class="ls-field">
+        <label class="ls-label" for="rg-email">Correo electrónico</label>
+        <input id="rg-email" type="email" class="ls-input" placeholder="tu@correo.com" autocomplete="email"/>
+      </div>
+      <div class="ls-field">
+        <label class="ls-label" for="rg-pass">Contraseña</label>
+        <div class="ls-pass-wrap">
+          <input id="rg-pass" type="password" class="ls-input" placeholder="Mínimo 6 caracteres" autocomplete="new-password"/>
+          <button id="rg-eye" class="ls-eye" tabindex="-1"></button>
+        </div>
+        <div id="rg-sbar" class="ls-sbar" style="display:none"><div id="rg-sfill" class="ls-sfill"></div></div>
+        <span id="rg-stxt" class="ls-stxt" style="display:none"></span>
+      </div>
+      <div class="ls-field">
+        <label class="ls-label" for="rg-pass2">Confirmar contraseña</label>
+        <div class="ls-pass-wrap">
+          <input id="rg-pass2" type="password" class="ls-input" placeholder="Repite tu contraseña" autocomplete="new-password"/>
+          <button id="rg-eye2" class="ls-eye" tabindex="-1"></button>
+        </div>
+        <span id="rg-match" class="ls-match" style="display:none"></span>
+      </div>
+      <div id="rg-err" class="ls-err"></div>
+
+      <button class="ls-btn-main" id="rg-submit">
+        <span id="rg-txt">Crear mi cuenta</span>
+        <span id="rg-spin" class="ls-bspin" style="display:none"></span>
+      </button>
+      <button class="ls-btn-ghost" id="rg-back">← Ya tengo cuenta</button>
     </div>`;
 
-  } else if(_lsPhase === 'error'){
-    wrap.innerHTML=`
+    _eye('rg-eye','rg-pass'); _eye('rg-eye2','rg-pass2');
+    _enter('rg-pass2', _doRegister);
+    $('rg-back')?.addEventListener('click', ()=>{ _lsPhase='home'; _lsRender(); });
+    $('rg-submit')?.addEventListener('click', _doRegister);
+    $('rg-pass')?.addEventListener('input', ()=>{
+      const val=$('rg-pass').value;
+      const sb=$('rg-sbar'), sf=$('rg-sfill'), st=$('rg-stxt');
+      if(!val){ if(sb)sb.style.display='none'; if(st)st.style.display='none'; return; }
+      if(sb)sb.style.display=''; if(st)st.style.display='';
+      const lv=_strength(val);
+      if(sf){ sf.style.width=lv.w; sf.style.background=lv.c; }
+      if(st){ st.textContent=lv.t; st.style.color=lv.c; }
+      _checkMatch();
+    });
+    $('rg-pass2')?.addEventListener('input', _checkMatch);
+    setTimeout(()=>$('rg-name')?.focus(), 80);
+
+  } else if (_lsPhase === 'forgot') {
+    wrap.innerHTML = `
+    <div class="ls-card">
+      <div class="ls-mail-ico">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="rgba(160,120,255,.8)" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      </div>
+      <p class="ls-phase-title">Recuperar contraseña</p>
+      <p class="ls-phase-sub">Ingresa tu correo y te enviamos un enlace para restablecerla. Revisa también spam.</p>
+
+      <div class="ls-field">
+        <label class="ls-label" for="fg-email">Correo electrónico</label>
+        <input id="fg-email" type="email" class="ls-input" placeholder="tu@correo.com" autocomplete="email"/>
+      </div>
+      <div id="fg-err" class="ls-err"></div>
+
+      <button class="ls-btn-main" id="fg-submit" style="margin-top:14px">
+        <span id="fg-txt">Enviar enlace</span>
+        <span id="fg-spin" class="ls-bspin" style="display:none"></span>
+      </button>
+      <button class="ls-btn-ghost" id="fg-back">← Volver al inicio de sesión</button>
+    </div>`;
+
+    _enter('fg-email', _doForgot);
+    $('fg-back')?.addEventListener('click', ()=>{ _lsPhase='email-login'; _lsRender(); });
+    $('fg-submit')?.addEventListener('click', _doForgot);
+    setTimeout(()=>$('fg-email')?.focus(), 80);
+
+  } else if (_lsPhase === 'check-email') {
+    const isVerify = _lsEmailMode === 'verify';
+    wrap.innerHTML = `
     <div class="ls-card" style="text-align:center">
-      <div style="font-size:2.5rem;margin-bottom:12px">⚠️</div>
-      <p style="font-size:.9rem;color:var(--red);margin-bottom:20px" id="ls-err-msg">Error al iniciar sesión</p>
-      <button class="ls-google-btn" id="ls-retry-btn">Intentar de nuevo</button>
+      <div class="ls-mail-ico">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="rgba(160,120,255,.85)" stroke-width="1.5">
+          <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+          <polyline points="22,6 12,13 2,6"/>
+        </svg>
+      </div>
+      <p class="ls-phase-title">${isVerify ? 'Verifica tu correo' : 'Revisa tu bandeja'}</p>
+      <p class="ls-phase-sub">
+        ${isVerify
+          ? `Enviamos un correo de verificación a<br><strong style="color:rgba(180,140,255,.9)">${_lsPendingEmail}</strong>.<br>Ábrelo y haz clic en el enlace para activar tu cuenta.`
+          : `Enviamos un enlace de restablecimiento a<br><strong style="color:rgba(180,140,255,.9)">${_lsPendingEmail}</strong>.<br>El enlace expira en 1 hora. Revisa también spam.`
+        }
+      </p>
+
+      ${isVerify ? `
+        <button class="ls-btn-main" id="ce-done">✓ Ya verifiqué mi correo</button>
+        <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-top:14px">
+          <span style="font-size:.74rem;color:var(--t2)">¿No llegó?</span>
+          <button class="ls-link" id="ce-resend">Reenviar correo</button>
+          <span id="ce-cd" style="font-size:.74rem;color:var(--t2);display:none"></span>
+        </div>
+      ` : `
+        <button class="ls-link" id="ce-resend-reset" style="display:block;margin:0 auto 4px">Reenviar enlace</button>
+        <p style="font-size:.68rem;color:var(--t2);margin-top:6px">Si no llega, revisa la carpeta de spam.</p>
+      `}
+
+      <button class="ls-btn-ghost" id="ce-back">← Volver al inicio de sesión</button>
     </div>`;
-    document.getElementById('ls-retry-btn')?.addEventListener('click',()=>{_lsPhase='accounts';_lsRender();});
-  }
-}
 
-function _lsRenderEmailLogin(wrap){
-  wrap.innerHTML=`<div class="ls-card">
-    <button class="ls-music-btn" id="ls-music-toggle">${_lsMusicEnabled?'🔊':'🔇'}</button>
-    <div style="display:flex;justify-content:center;margin-bottom:16px"><div class="ls-logo-ring"><svg width="38" height="38" viewBox="0 0 36 36" fill="none"><rect x="6" y="6" width="10" height="10" rx="2" fill="var(--ac)" opacity=".9"/><rect x="20" y="6" width="10" height="10" rx="2" fill="var(--purple)" opacity=".7"/><rect x="6" y="20" width="10" height="10" rx="2" fill="var(--cyan)" opacity=".6"/><rect x="20" y="20" width="10" height="10" rx="2" fill="var(--ac)" opacity=".5"/></svg></div></div>
-    <h1 class="ls-title">CÓDICE</h1><p class="ls-sub">Sistema Operativo de Estudio IA</p>
-    <div class="ls-divider"></div>
-    <p style="font-size:.82rem;color:var(--t1);margin-bottom:16px">Ingresa tus datos para continuar.</p>
-    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:6px">
-      <input id="ls-ei-email" type="email" placeholder="tu@email.com" style="width:100%;padding:11px 14px;background:rgba(255,255,255,.05);border:1px solid var(--b1);border-radius:10px;color:var(--t0);font-family:var(--fb);font-size:.88rem;outline:none;box-sizing:border-box" autocomplete="email"/>
-      <input id="ls-ei-pass" type="password" placeholder="Contraseña" style="width:100%;padding:11px 14px;background:rgba(255,255,255,.05);border:1px solid var(--b1);border-radius:10px;color:var(--t0);font-family:var(--fb);font-size:.88rem;outline:none;box-sizing:border-box" autocomplete="current-password"/>
-    </div>
-    <button id="ls-ei-forgot" style="background:none;border:none;color:var(--ac);font-family:var(--fb);font-size:.76rem;cursor:pointer;text-decoration:underline;padding:0;margin-bottom:14px">¿Olvidaste tu contraseña?</button>
-    <button class="ls-enter-btn" id="ls-ei-submit">Entrar →</button>
-    <div class="ls-divider" style="margin:14px 0"></div>
-    <button id="ls-ei-noreg" style="background:none;border:none;color:var(--t2);font-family:var(--fb);font-size:.8rem;cursor:pointer;width:100%;text-align:center">¿No tienes cuenta? <span style="color:var(--ac)">Crear cuenta</span></button>
-    <button class="ls-back-btn-sm" id="ls-ei-back">← Volver</button>
-  </div>`;
-  document.getElementById('ls-ei-submit')?.addEventListener('click', _lsHandleEmailLogin);
-  document.getElementById('ls-ei-email')?.addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('ls-ei-pass')?.focus(); });
-  document.getElementById('ls-ei-pass')?.addEventListener('keydown', e=>{ if(e.key==='Enter') _lsHandleEmailLogin(); });
-  document.getElementById('ls-ei-forgot')?.addEventListener('click', ()=>{ _lsPhase='forgot'; _lsRender(); });
-  document.getElementById('ls-ei-noreg')?.addEventListener('click', ()=>{ _lsPhase='register'; _lsRender(); });
-  document.getElementById('ls-ei-back')?.addEventListener('click', ()=>{ _lsPhase='accounts'; _lsRender(); });
-  document.getElementById('ls-music-toggle')?.addEventListener('click', e=>{e.stopPropagation();_lsMusicEnabled=!_lsMusicEnabled;if(_lsMusicEnabled)_startLoginMusic();else _stopLoginMusic();_lsRender();});
-  setTimeout(()=>document.getElementById('ls-ei-email')?.focus(), 100);
-}
-
-function _lsRenderRegister(wrap){
-  wrap.innerHTML=`<div class="ls-card">
-    <button class="ls-music-btn" id="ls-music-toggle">${_lsMusicEnabled?'🔊':'🔇'}</button>
-    <div style="display:flex;justify-content:center;margin-bottom:16px"><div class="ls-logo-ring"><svg width="38" height="38" viewBox="0 0 36 36" fill="none"><rect x="6" y="6" width="10" height="10" rx="2" fill="var(--ac)" opacity=".9"/><rect x="20" y="6" width="10" height="10" rx="2" fill="var(--purple)" opacity=".7"/><rect x="6" y="20" width="10" height="10" rx="2" fill="var(--cyan)" opacity=".6"/><rect x="20" y="20" width="10" height="10" rx="2" fill="var(--ac)" opacity=".5"/></svg></div></div>
-    <h1 class="ls-title">CÓDICE</h1><p class="ls-sub">Sistema Operativo de Estudio IA</p>
-    <div class="ls-divider"></div>
-    <p style="font-size:.82rem;color:var(--t1);margin-bottom:16px">Crea tu cuenta gratuita.</p>
-    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
-      <input id="ls-reg-email" type="email" placeholder="tu@email.com" style="width:100%;padding:11px 14px;background:rgba(255,255,255,.05);border:1px solid var(--b1);border-radius:10px;color:var(--t0);font-family:var(--fb);font-size:.88rem;outline:none;box-sizing:border-box" autocomplete="email"/>
-      <input id="ls-reg-pass" type="password" placeholder="Contraseña (mín. 6 caracteres)" style="width:100%;padding:11px 14px;background:rgba(255,255,255,.05);border:1px solid var(--b1);border-radius:10px;color:var(--t0);font-family:var(--fb);font-size:.88rem;outline:none;box-sizing:border-box" autocomplete="new-password"/>
-      <input id="ls-reg-pass2" type="password" placeholder="Confirmar contraseña" style="width:100%;padding:11px 14px;background:rgba(255,255,255,.05);border:1px solid var(--b1);border-radius:10px;color:var(--t0);font-family:var(--fb);font-size:.88rem;outline:none;box-sizing:border-box" autocomplete="new-password"/>
-    </div>
-    <button class="ls-enter-btn" id="ls-reg-submit">Crear cuenta →</button>
-    <div class="ls-divider" style="margin:14px 0"></div>
-    <button id="ls-reg-yesacc" style="background:none;border:none;color:var(--t2);font-family:var(--fb);font-size:.8rem;cursor:pointer;width:100%;text-align:center">¿Ya tienes cuenta? <span style="color:var(--ac)">Iniciar sesión</span></button>
-    <button class="ls-back-btn-sm" id="ls-reg-back">← Volver</button>
-  </div>`;
-  document.getElementById('ls-reg-submit')?.addEventListener('click', _lsHandleRegister);
-  document.getElementById('ls-reg-pass2')?.addEventListener('keydown', e=>{ if(e.key==='Enter') _lsHandleRegister(); });
-  document.getElementById('ls-reg-yesacc')?.addEventListener('click', ()=>{ _lsPhase='emailLogin'; _lsRender(); });
-  document.getElementById('ls-reg-back')?.addEventListener('click', ()=>{ _lsPhase='accounts'; _lsRender(); });
-  document.getElementById('ls-music-toggle')?.addEventListener('click', e=>{e.stopPropagation();_lsMusicEnabled=!_lsMusicEnabled;if(_lsMusicEnabled)_startLoginMusic();else _stopLoginMusic();_lsRender();});
-  setTimeout(()=>document.getElementById('ls-reg-email')?.focus(), 100);
-}
-
-function _lsRenderVerify(wrap){
-  wrap.innerHTML=`<div class="ls-card" style="text-align:center">
-    <div style="font-size:2.5rem;margin-bottom:16px">📧</div>
-    <p style="font-size:.95rem;font-weight:600;color:var(--t0);margin-bottom:8px">Verifica tu email</p>
-    <p style="font-size:.82rem;color:var(--t1);line-height:1.6;margin-bottom:20px">
-      Te enviamos un correo a <strong style="color:var(--ac)">${_lsPendingEmail}</strong>.<br>
-      Revisa tu bandeja de entrada y haz clic en el enlace.
-    </p>
-    <button class="ls-enter-btn" id="ls-verify-done" style="margin-bottom:10px">Ya verifiqué, continuar →</button>
-    <button class="ls-google-btn" id="ls-verify-resend" style="margin-bottom:10px">Reenviar correo</button>
-    <button class="ls-back-btn-sm" id="ls-verify-back">← Volver al inicio</button>
-  </div>`;
-  document.getElementById('ls-verify-done')?.addEventListener('click', _lsHandleVerifyDone);
-  document.getElementById('ls-verify-resend')?.addEventListener('click', _lsHandleResend);
-  document.getElementById('ls-verify-back')?.addEventListener('click', ()=>{ _lsPhase='accounts'; _lsRender(); });
-}
-
-function _lsRenderForgot(wrap){
-  wrap.innerHTML=`<div class="ls-card">
-    <button class="ls-music-btn" id="ls-music-toggle">${_lsMusicEnabled?'🔊':'🔇'}</button>
-    <div style="display:flex;justify-content:center;margin-bottom:16px"><div class="ls-logo-ring"><svg width="38" height="38" viewBox="0 0 36 36" fill="none"><rect x="6" y="6" width="10" height="10" rx="2" fill="var(--ac)" opacity=".9"/><rect x="20" y="6" width="10" height="10" rx="2" fill="var(--purple)" opacity=".7"/><rect x="6" y="20" width="10" height="10" rx="2" fill="var(--cyan)" opacity=".6"/><rect x="20" y="20" width="10" height="10" rx="2" fill="var(--ac)" opacity=".5"/></svg></div></div>
-    <h1 class="ls-title">CÓDICE</h1>
-    <div class="ls-divider"></div>
-    <p style="font-size:.82rem;color:var(--t1);margin-bottom:16px">Ingresa tu email para recibir un enlace de restablecimiento.</p>
-    <input id="ls-fg-email" type="email" placeholder="tu@email.com" style="width:100%;padding:11px 14px;background:rgba(255,255,255,.05);border:1px solid var(--b1);border-radius:10px;color:var(--t0);font-family:var(--fb);font-size:.88rem;outline:none;box-sizing:border-box;margin-bottom:14px" autocomplete="email"/>
-    <button class="ls-enter-btn" id="ls-fg-submit">Enviar enlace →</button>
-    <button class="ls-back-btn-sm" id="ls-fg-back" style="margin-top:10px">← Volver</button>
-  </div>`;
-  document.getElementById('ls-fg-submit')?.addEventListener('click', _lsHandleForgot);
-  document.getElementById('ls-fg-email')?.addEventListener('keydown', e=>{ if(e.key==='Enter') _lsHandleForgot(); });
-  document.getElementById('ls-fg-back')?.addEventListener('click', ()=>{ _lsPhase='emailLogin'; _lsRender(); });
-  document.getElementById('ls-music-toggle')?.addEventListener('click', e=>{e.stopPropagation();_lsMusicEnabled=!_lsMusicEnabled;if(_lsMusicEnabled)_startLoginMusic();else _stopLoginMusic();_lsRender();});
-  setTimeout(()=>document.getElementById('ls-fg-email')?.focus(), 100);
-}
-
-function _lsUpdatePinDots(){
-  const dots = document.querySelectorAll('#ls-pin-dots .ls-pin-dot');
-  dots.forEach((d,i)=>d.classList.toggle('filled',i<_lsPin.length));
-}
-function _lsSavePinToggle(){
-  const btn=document.getElementById('ls-save-pin');
-  if(btn) btn.disabled=_lsPin.length<1;
-}
-
-let _lsPendingEmail = '';
-
-function _lsMusicToggle(e){
-  e.stopPropagation();
-  _lsMusicEnabled=!_lsMusicEnabled;
-  if(_lsMusicEnabled) _startLoginMusic(); else _stopLoginMusic();
-  _lsRender();
-}
-
-function _lsLogo(){
-  return `<div style="display:flex;justify-content:center;margin-bottom:16px">
-    <div class="ls-logo-ring">
-      <svg width="38" height="38" viewBox="0 0 36 36" fill="none">
-        <rect x="6" y="6" width="10" height="10" rx="2" fill="var(--ac)" opacity=".9"/>
-        <rect x="20" y="6" width="10" height="10" rx="2" fill="var(--purple)" opacity=".7"/>
-        <rect x="6" y="20" width="10" height="10" rx="2" fill="var(--cyan)" opacity=".6"/>
-        <rect x="20" y="20" width="10" height="10" rx="2" fill="var(--ac)" opacity=".5"/>
-      </svg>
-    </div>
-  </div>`;
-}
-
-function _lsMusicBtn(){
-  return `<button class="ls-music-btn" id="ls-music-toggle">${_lsMusicEnabled?'🔊 Música':'🔇 Mute'}</button>`;
-}
-
-function _lsFriendlyError(code=''){
-  const map = {
-    'auth/user-not-found': 'No existe una cuenta con ese email.',
-    'auth/wrong-password': 'Contraseña incorrecta.',
-    'auth/invalid-credential': 'Email o contraseña incorrectos.',
-    'auth/email-already-in-use': 'Ya existe una cuenta con ese email.',
-    'auth/weak-password': 'La contraseña es muy débil (mín. 6 caracteres).',
-    'auth/invalid-email': 'El email no es válido.',
-    'auth/too-many-requests': 'Demasiados intentos. Espera unos minutos.',
-    'auth/network-request-failed': 'Sin conexión. Revisa tu internet.',
-  };
-  for(const [k,v] of Object.entries(map)){
-    if(code.includes(k)) return v;
-  }
-  return code || 'Error desconocido. Inténtalo de nuevo.';
-}
-
-async function _lsHandleEmailLogin(){
-  const email = document.getElementById('ls-ei-email')?.value.trim();
-  const pass  = document.getElementById('ls-ei-pass')?.value;
-  if(!email || !pass){ _lsShowToast('Completa todos los campos.'); return; }
-  _lsPhase='loading'; _lsRender();
-  const _loadMsg = document.getElementById('ls-load-msg');
-  if(_loadMsg) _loadMsg.textContent='Iniciando sesión…';
-  try {
-    const { signInWithEmailAndPassword } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
-    const cred = await signInWithEmailAndPassword(_auth, email, pass);
-    if(!cred.user.emailVerified){
-      _lsPendingEmail = email;
-      _lsPhase='verify'; _lsRender(); return;
-    }
-    const _loadMsg2 = document.getElementById('ls-load-msg');
-    if(_loadMsg2) _loadMsg2.textContent='¡Bienvenido!';
-  } catch(e){
-    _lsPhase='emailLogin'; _lsRender();
-    _lsShowToast(_lsFriendlyError(e.code));
-  }
-}
-
-async function _lsHandleRegister(){
-  const email = document.getElementById('ls-reg-email')?.value.trim();
-  const pass  = document.getElementById('ls-reg-pass')?.value;
-  const pass2 = document.getElementById('ls-reg-pass2')?.value;
-  if(!email || !pass || !pass2){ _lsShowToast('Completa todos los campos.'); return; }
-  if(pass !== pass2){ _lsShowToast('Las contraseñas no coinciden.'); return; }
-  if(pass.length < 6){ _lsShowToast('La contraseña debe tener al menos 6 caracteres.'); return; }
-  _lsPhase='loading'; _lsRender();
-  const _loadMsg = document.getElementById('ls-load-msg');
-  if(_loadMsg) _loadMsg.textContent='Creando tu cuenta…';
-  try {
-    const { createUserWithEmailAndPassword, sendEmailVerification,
-            fetchSignInMethodsForEmail, EmailAuthProvider, linkWithCredential } =
-      await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
-
-    // Verificar si el email ya existe
-    let methods = [];
-    try { methods = await fetchSignInMethodsForEmail(_auth, email); } catch(e){}
-
-    if(methods.includes('google.com') && !methods.includes('password')){
-      // Cuenta Google existente — vincular email/password
-      if(_auth.currentUser){
-        const cred = EmailAuthProvider.credential(email, pass);
-        await linkWithCredential(_auth.currentUser, cred);
-        _lsShowToast('¡Contraseña añadida a tu cuenta! Ya puedes iniciar sesión con email.');
-        _lsPhase='emailLogin'; _lsRender(); return;
-      } else {
-        _lsPhase='register'; _lsRender();
-        _lsShowToast('Esa cuenta usa Google. Inicia sesión con Google primero, luego podrás añadir contraseña.');
-        return;
-      }
-    }
-
-    const cred = await createUserWithEmailAndPassword(_auth, email, pass);
-    await sendEmailVerification(cred.user);
-    _lsPendingEmail = email;
-    _lsPhase='verify'; _lsRender();
-  } catch(e){
-    _lsPhase='register'; _lsRender();
-    _lsShowToast(_lsFriendlyError(e.code));
-  }
-}
-
-async function _lsHandleForgot(){
-  const email = document.getElementById('ls-fg-email')?.value.trim();
-  if(!email){ _lsShowToast('Ingresa tu email.'); return; }
-  _lsPhase='loading'; _lsRender();
-  try {
-    const { sendPasswordResetEmail } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
-    await sendPasswordResetEmail(_auth, email);
-    _lsPendingEmail = email;
-    _lsPhase='verify'; _lsRender();
-  } catch(e){
-    _lsPhase='forgot'; _lsRender();
-    _lsShowToast(_lsFriendlyError(e.code));
-  }
-}
-
-async function _lsHandleVerifyDone(){
-  _lsPhase='loading'; _lsRender();
-  try {
-    const { reload } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
-    await reload(_auth.currentUser);
-    if(_auth.currentUser?.emailVerified){
-      const _loadMsg = document.getElementById('ls-load-msg');
-      if(_loadMsg) _loadMsg.textContent='¡Cuenta verificada!';
+    $('ce-back')?.addEventListener('click', ()=>{ _lsPhase='email-login'; _lsRender(); });
+    if(isVerify){
+      $('ce-done')?.addEventListener('click', _doCheckVerified);
+      $('ce-resend')?.addEventListener('click', _doResend);
+      _startCooldown('ce-resend','ce-cd',60);
     } else {
-      _lsPhase='verify'; _lsRender();
-      _lsShowToast('Aún no detectamos la verificación. Revisa tu Gmail.');
+      $('ce-resend-reset')?.addEventListener('click', _doResendReset);
     }
-  } catch(e){ _lsPhase='verify'; _lsRender(); }
-}
 
-async function _lsHandleResend(){
-  try {
-    const { sendEmailVerification } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
-    if(_auth.currentUser) await sendEmailVerification(_auth.currentUser);
-    _lsShowToast('Correo reenviado. Revisa tu Gmail.');
-  } catch(e){ _lsShowToast('Espera un momento antes de reenviar.'); }
-}
-
-function _lsShowToast(msg){
-  const t = document.createElement('div');
-  t.textContent = msg;
-  t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:rgba(30,30,50,.97);color:#fff;padding:10px 18px;border-radius:10px;font-size:.82rem;z-index:99999;pointer-events:none;box-shadow:0 4px 20px rgba(0,0,0,.4)';
-  document.body.appendChild(t);
-  setTimeout(()=>t.remove(), 3000);
-}
-
-async function _lsHandleGoogle(){
-  _lsPhase='loading';_lsRender();
-  const _loadMsg = document.getElementById('ls-load-msg');
-  if(_loadMsg) _loadMsg.textContent='Abriendo Google…';
-  let res;
-  try { res = await Auth.loginWithGoogle(); }
-  catch(e) {
-    console.error('[LOGIN] Error inesperado:', e);
-    res = { ok: false, error: e.message };
+  } else if (_lsPhase === 'loading') {
+    wrap.innerHTML = `
+    <div class="ls-card" style="text-align:center;padding:48px 34px">
+      <div class="ls-spin"></div>
+      <p id="ls-load-msg" style="font-size:.85rem;color:var(--t2);margin-top:18px">Cargando…</p>
+    </div>`;
   }
-  // FIX: Nunca usar redirect en Capacitor (causaba pantalla negra y 2FA siempre)
-  // if(res && res.redirect) return;  ← eliminado
+}
 
+/* ══════════════ HANDLERS ══════════════ */
+function _checkMatch() {
+  const p1=$('rg-pass')?.value||'', p2=$('rg-pass2')?.value||'';
+  const el=$('rg-match');
+  if(!el) return;
+  if(!p2){ el.style.display='none'; return; }
+  el.style.display='';
+  if(p1===p2){ el.textContent='✓ Las contraseñas coinciden'; el.style.color='#60e880'; }
+  else        { el.textContent='✗ No coinciden';             el.style.color='#ff7070'; }
+}
+
+async function _doLogin() {
+  _setErr('li-err','');
+  const email = $('li-email')?.value.trim()||'';
+  const pass  = $('li-pass')?.value||'';
+  if(!email){ _setErr('li-err','Ingresa tu correo electrónico.'); $('li-email')?.classList.add('err'); return; }
+  if(!pass) { _setErr('li-err','Ingresa tu contraseña.');          $('li-pass')?.classList.add('err');  return; }
+  _setBusy('li-submit','li-txt','li-spin',true,'Iniciando sesión…');
+  const res = await Auth.login(email, pass);
+  _setBusy('li-submit','li-txt','li-spin',false,'Entrar');
   if(res.ok){
-    const msg = document.getElementById('ls-load-msg');
-    if(msg) msg.textContent='¡Bienvenido!';
-    // FIX: El listener onUserChange en _registerPostBootAuthListener se encarga
-    // de ocultar el LoginScreen. Aquí solo actualizamos el mensaje de carga.
+    if(res.needsVerification){ _lsEmailMode='verify'; _lsPendingEmail=email; _lsPhase='check-email'; _lsRender(); return; }
+    _lsPhase='loading'; _lsRender(); $('ls-load-msg').textContent='¡Bienvenido! Cargando tu espacio…';
     return;
   }
-  // FIX: Si el usuario cerró el popup (cancelled), volver al estado de selección
-  // de cuenta limpiamente, sin quedar en pantalla negra ni estado de carga.
-  if(res.cancelled){ _lsPhase='accounts';_lsRender(); return; }
-
-  // Error real — mostrar mensaje y botón de reintentar
-  _lsPhase='error';_lsRender();
-  const errMsg = document.getElementById('ls-err-msg');
-  if(errMsg) errMsg.textContent = res.error||'Error desconocido. Inténtalo de nuevo.';
+  _setErr('li-err', res.message);
+  if(res.code?.includes('email'))    $('li-email')?.classList.add('err');
+  if(res.code?.includes('password')||res.code?.includes('credential')) $('li-pass')?.classList.add('err');
+  setTimeout(()=>{ $('li-email')?.classList.remove('err'); $('li-pass')?.classList.remove('err'); },2500);
 }
 
-function _lsEnterAccount(){
-  if(!_lsSelectedAccount) return;
-  const pin=_getPin(_lsSelectedAccount);
-  if(pin){ _lsPhase='pin';_lsRender(); }
-  else { _lsFinishLogin(null); }
+async function _doRegister() {
+  _setErr('rg-err','');
+  const name  = $('rg-name')?.value.trim()||'';
+  const email = $('rg-email')?.value.trim()||'';
+  const pass  = $('rg-pass')?.value||'';
+  const pass2 = $('rg-pass2')?.value||'';
+  if(!email)         { _setErr('rg-err','Ingresa tu correo electrónico.'); return; }
+  if(!pass)          { _setErr('rg-err','Ingresa una contraseña.');          return; }
+  if(pass.length<6)  { _setErr('rg-err','La contraseña debe tener al menos 6 caracteres.'); return; }
+  if(pass!==pass2)   { _setErr('rg-err','Las contraseñas no coinciden. Verifica el segundo campo.'); return; }
+  _setBusy('rg-submit','rg-txt','rg-spin',true,'Creando cuenta…');
+  const res = await Auth.register(email, pass, name);
+  _setBusy('rg-submit','rg-txt','rg-spin',false,'Crear mi cuenta');
+  if(res.ok){ _lsEmailMode='verify'; _lsPendingEmail=email; _lsPhase='check-email'; _lsRender(); return; }
+  _setErr('rg-err', res.message);
 }
 
-function _lsCheckPin(){
-  const expected=_getPin(_lsSelectedAccount);
-  if(_lsPin===expected){
-    _lsFinishLogin(null);
-  } else {
-    const err=document.getElementById('ls-pin-error');
-    if(err){ err.textContent='PIN incorrecto. Intenta de nuevo.'; setTimeout(()=>{err.textContent='';},2000); }
-    _lsPin=''; _lsUpdatePinDots();
-  }
+async function _doForgot() {
+  _setErr('fg-err','');
+  const email = $('fg-email')?.value.trim()||'';
+  if(!email){ _setErr('fg-err','Ingresa tu correo electrónico.'); return; }
+  _setBusy('fg-submit','fg-txt','fg-spin',true,'Enviando…');
+  await Auth.sendPasswordReset(email); // siempre mostramos pantalla de éxito
+  _setBusy('fg-submit','fg-txt','fg-spin',false,'Enviar enlace');
+  _lsEmailMode='reset'; _lsPendingEmail=email; _lsPhase='check-email'; _lsRender();
 }
 
-function _lsFinishLogin(pin){
-  // Sound de lanzamiento — despegue
-  try{ SoundFX.play('launch'); }catch(e){}
-  // Trigger a "virtual" login using saved account data
-  const accts = _loadAccounts();
-  const acct  = accts.find(a=>a.uid===_lsSelectedAccount);
-  if(!acct) return;
-  // Update lastLogin
-  _upsertAccount(acct);
-  // Simulate what the auth listener does
-  window.__codiceUser = acct;
-  if(typeof _updateUserUI==='function') _updateUserUI(acct);
-  // Load local data
-  Store.loadForUser(acct.uid);
-  // Load AI conversations from cloud (non-blocking)
-  try{ loadConvHistory(); }catch(e){}
-  // Trigger Firestore sync to get latest modules/messages/settings from cloud
-  (async()=>{
-    try{
-      if(typeof FirestoreSync!=='undefined'){
-        const localTs = 0; // always pull fresh to get remote data
-        const remote = await FirestoreSync.init(localTs);
-        if(remote && typeof applyRemoteState==='function') applyRemoteState(remote);
-      }
-    }catch(e){ console.warn('[LoginScreen] FirestoreSync pull failed:',e); }
-    // Show modules screen after sync attempt
-    try{ showScreen('modules-screen'); renderModules(); }catch{}
-  })();
-  LoginScreen.hide();
-  /* REMOVED: init() re-call here caused duplicate event listeners → duplicate module creation.
-     The app is already fully initialized. We only need to ensure the UI is shown. */
-  if(typeof showScreen==='function') try{ showScreen('modules-screen'); }catch{}
+async function _doCheckVerified() {
+  const btn=$('ce-done'); if(btn) btn.disabled=true;
+  const res = await Auth.reloadUser();
+  if(btn) btn.disabled=false;
+  if(res.verified){ _lsPhase='loading'; _lsRender(); $('ls-load-msg').textContent='¡Cuenta verificada! Cargando…'; return; }
+  _toast('Aún no detectamos la verificación. Revisa tu correo y haz clic en el enlace.','rgba(255,200,50,.7)');
 }
 
-function _goToLoginScreen(){
-  try{ SoundFX.play('closePop'); }catch(e){}
-  window.__codiceUser = null;
-  /* NOTE: __codiceInitLocked stays true — event wiring must NOT re-run.
-     __codiceEventsWired also stays true for the same reason.
-     Only FirestoreSync is disabled on logout. */
-  if(typeof FirestoreSync!=='undefined') try{ FirestoreSync.disable(); }catch(e){}
-  // Reset selected account so user must pick again
-  _lsSelectedAccount = null;
-  _lsPhase = 'accounts';
-  if(typeof LoginScreen!=='undefined'){ LoginScreen.show(); }
+async function _doResend() {
+  const res = await Auth.resendVerification();
+  if(res.ok && !res.alreadyVerified){ _toast('Correo reenviado. Revisa tu bandeja y spam.'); _startCooldown('ce-resend','ce-cd',60); }
+  else if(res.alreadyVerified){ _toast('Tu correo ya está verificado. Recarga la página.','rgba(80,220,120,.8)'); }
+  else { _toast(res.message||'No se pudo reenviar. Espera un momento.','rgba(255,80,80,.7)'); }
 }
 
-// ── Mount / Show / Hide ──
-function _lsShow(){
-  // Ocultar toast de actualización mientras el login esté activo
-  try { const t=document.getElementById('sw-update-toast'); if(t) t.classList.remove('visible'); } catch(e){}
-  _lsPhase='accounts';
-  _lsSelectedAccount=null;
-  // Renderizar ANTES de hacer visible el elemento
-  const wrap=document.getElementById('login-panel-wrap');
-  if(wrap && !wrap.querySelector('.ls-card')){ _lsRender(); }
-  _lsMount();
-  const el=document.getElementById('login-screen');
-  if(el){
-    el.style.display='flex';
-    el.style.opacity='0';
-    el.style.transition='opacity .3s ease';
-    // Re-attach galaxy canvas if needed
-    const canvas=document.getElementById('login-galaxy-canvas');
-    if(canvas && !_lsStopGalaxy){ _lsStopGalaxy=_startGalaxyCanvas(canvas); }
-    // Reset music click listener so it fires again
-    el.removeEventListener('click',_lsOnFirstClick);
-    el.addEventListener('click',_lsOnFirstClick,{once:true});
-    // Asegurar que el panel tenga contenido antes del fade
-    if(!el.querySelector('.ls-card')){ _lsRender(); }
-    // Fade in
-    requestAnimationFrame(()=>{ requestAnimationFrame(()=>{
-      el.style.opacity='1';
-      setTimeout(()=>{ el.style.transition=''; },320);
-    }); });
-  }
+async function _doResendReset() {
+  await Auth.sendPasswordReset(_lsPendingEmail);
+  _toast('Enlace reenviado. Revisa tu correo y spam.');
 }
 
-function _lsHide(){
-  _stopLoginMusic();
-  if(_lsStopGalaxy){ _lsStopGalaxy(); _lsStopGalaxy=null; }
-  const el=document.getElementById('login-screen');
-  if(!el) return;
-  el.style.opacity='0';el.style.transition='opacity .35s ease';
-  setTimeout(()=>{
-    el.style.display='none';
-    el.style.opacity='';
-    el.style.transition='';
-    // Reset animation on login-panel-wrap so the card animates again next time
-    const panel=document.getElementById('login-panel-wrap');
-    if(panel){ panel.innerHTML=''; }
-    // Force reset phase so animation triggers fresh on next show
-    _lsPhase='accounts';
-    _lsSelectedAccount=null;
-  },350);
-}
+/* ══════════════ GUARDAR CUENTA TRAS LOGIN ══════════════ */
+Auth.onUserChange(user => {
+  if(user) _upsertAccount(user);
+});
 
+/* ══════════════ API PÚBLICA ══════════════ */
 const LoginScreen = {
-  show(){ _lsShow(); },
-  hide(){ _lsHide(); },
-  onUserLoggedIn(user){
-    // Called after Google auth — upsert account, show PIN setup if new
-    // IMPORTANT: check isNew BEFORE _upsertAccount so the account isn't in the list yet
-    const acctsBefore = _loadAccounts();
-    const isNew = acctsBefore.findIndex(a=>a.uid===user.uid) === -1;
-    _upsertAccount(user);
-    _lsSelectedAccount = user.uid;
-    const existingPin = _getPin(user.uid);
-    if(!existingPin && isNew){
-      // Show PIN setup for new accounts
-      const el=document.getElementById('login-screen');
-      if(el){ el.style.display='flex'; _lsPhase='newPin'; _lsRender(); }
-    } else {
-      _lsHide();
-    }
+  show() {
+    _lsMount();
+    const el=$('login-screen');
+    if(el){ el.style.display='flex'; _lsPhase='home'; _lsRender(); }
+  },
+  hide() {
+    _stopLoginMusic();
+    if(_lsStopGalaxy){ _lsStopGalaxy(); _lsStopGalaxy=null; }
+    const el=$('login-screen');
+    if(!el) return;
+    el.style.transition='opacity .3s ease,transform .3s ease';
+    el.style.opacity='0'; el.style.transform='scale(1.02)';
+    setTimeout(()=>{ if(el){ el.style.display='none'; el.style.opacity=''; el.style.transform=''; } },300);
+  },
+  onUserLoggedIn(user) {
+    if(user){ _upsertAccount(user); this.hide(); }
   }
 };
 
-// Exponer globalmente
 window.LoginScreen = LoginScreen;
 
 /* ════════════════════════════════════════════════════════════════════
    CÓDICE — CodiceSwManager
-   Gestión completa del Service Worker: registro, mensajes, offline UI,
-   background sync, y actualización en un click.
-════════════════════════════════════════════════════════════════════ */
-const CodiceSwManager = (() => {
-  'use strict';
-
-  let _reg      = null;   // ServiceWorkerRegistration activa
-  let _waiting  = null;   // SW esperando activación (update disponible)
-  let _online   = navigator.onLine;
-  let _queueLen = 0;      // operaciones pendientes encoladas
-
-  /* ── DOM helpers ─────────────────────────────────────────────── */
-  const $id = id => document.getElementById(id);
-
-  function _showOfflineBanner(show) {
-    const banner = $id('sw-offline-banner');
-    if (!banner) return;
-    banner.classList.toggle('visible', show);
-  }
-
-  function _updateQueueBadge(n) {
-    _queueLen = n;
-    const badge = $id('sw-queue-count');
-    if (!badge) return;
-    if (n > 0) {
-      badge.textContent = `${n} pendiente${n !== 1 ? 's' : ''}`;
-      badge.hidden = false;
-    } else {
-      badge.hidden = true;
-    }
-  }
-
-  function _showUpdateToast(show) {
-    const toast = $id('sw-update-toast');
-    if (!toast) return;
-    toast.classList.toggle('visible', show);
-  }
-
-  /* ── Mensajes recibidos del SW ───────────────────────────────── */
-  function _onSwMessage(event) {
-    const { data } = event;
-    if (!data || !data.type) return;
-
-    switch (data.type) {
-
-      // Nueva versión instalada — mostrar toast de actualización
-      // NOTA: SW_UPDATED llega desde activate(), cuando el SW ya tomó control.
-      // En ese punto _waiting ya es null, por eso el toast no se mostraba.
-      // Se muestra siempre — el usuario recargará y verá la versión nueva.
-      case 'SW_UPDATED':
-        console.log('[CodiceSwManager] SW actualizado a', data.version, '— recargando…');
-        // Recarga automática silenciosa: el SW ya tomó control, recargar da la versión nueva
-        setTimeout(() => { window.location.reload(); }, 800);
-        break;
-
-      // SW informa que estamos offline
-      case 'OFFLINE':
-        _online = false;
-        _showOfflineBanner(true);
-        break;
-
-      // SW informa que volvimos online
-      case 'ONLINE':
-        _online = true;
-        _showOfflineBanner(false);
-        _updateQueueBadge(0);
-        break;
-
-      // SW pide al cliente que vacíe su cola de operaciones
-      case 'SW_FLUSH_QUEUE':
-        _clientFlushQueue();
-        break;
-
-      // SW confirma que la sincronización terminó
-      case 'SYNC_COMPLETE':
-        _updateQueueBadge(0);
-        if (typeof Toast !== 'undefined') {
-          Toast.success('📶 Sincronización completada');
-        }
-        break;
-    }
-  }
-
-  /* ── Vaciar cola en el cliente (localStorage → Firestore) ─────── */
-  function _clientFlushQueue() {
-    // Delegar al CloudSync / OfflineEngine existente si está disponible
-    if (typeof CloudSync !== 'undefined' && typeof CloudSync._flushQueue === 'function') {
-      CloudSync._flushQueue().catch(() => {});
-      return;
-    }
-    // Fallback: disparar evento para que OfflineEngine lo maneje
-    if (typeof OfflineEngine !== 'undefined' && typeof OfflineEngine.enqueue !== 'undefined') {
-      window.dispatchEvent(new Event('online')); // simular online para que se vacíe
-    }
-  }
-
-  /* ── Manejar ciclo de vida del registro ──────────────────────── */
-  function _trackRegistration(reg) {
-    _reg = reg;
-
-    // SW instalando → puede haber update en curso
-    if (reg.installing) {
-      _trackWorker(reg.installing);
-    }
-
-    // SW esperando → hay update listo
-    if (reg.waiting) {
-      _waiting = reg.waiting;
-      _showUpdateToast(true);
-    }
-
-    // Escuchar futuros updates
-    reg.addEventListener('updatefound', () => {
-      const newWorker = reg.installing;
-      if (newWorker) _trackWorker(newWorker);
-    });
-  }
-
-  function _trackWorker(worker) {
-    worker.addEventListener('statechange', () => {
-      if (worker.state === 'installed' && navigator.serviceWorker.controller) {
-        // Un nuevo SW está instalado y esperando
-        _waiting = worker;
-        _showUpdateToast(true);
-        console.log('[CodiceSwManager] Nueva versión lista — esperando SKIP_WAITING.');
-      }
-    });
-  }
-
-  /* ── Polling de fallback para Background Sync ───────────────── */
-  let _pollTimer = null;
-  function _startSyncPolling() {
-    if (_pollTimer) return;
-    _pollTimer = setInterval(() => {
-      if (navigator.onLine) {
-        _clientFlushQueue();
-      }
-    }, 60_000); // cada 60 s
-  }
-  function _stopSyncPolling() {
-    clearInterval(_pollTimer);
-    _pollTimer = null;
-  }
-
-  /* ── Registrar sincronización pendiente ─────────────────────── */
-  function registerPendingSync() {
-    if (_reg && 'sync' in _reg) {
-      _reg.sync.register('codice-sync-pending').catch(e =>
-        console.warn('[CodiceSwManager] Background Sync no disponible:', e.message)
-      );
-    }
-  }
-
-  /* ── Inicializar ─────────────────────────────────────────────── */
-  function init() {
-    // No inicializar SW en Capacitor WebView
-    if (window.Capacitor !== undefined || location.protocol === 'capacitor:') {
-      console.log('[SW] Capacitor detectado — SW desactivado');
-      return;
-    }
-    if (!('serviceWorker' in navigator)) {
-      console.warn('[CodiceSwManager] Service Worker no soportado.');
-      return;
-    }
-    if (!['http:', 'https:'].includes(location.protocol)) {
-      console.warn('[CodiceSwManager] SW requiere HTTP/HTTPS.');
-      return;
-    }
-
-    /* ── Registrar sw.js ── */
-    navigator.serviceWorker.register('/sw.js', { scope: '/' })
-      .then(reg => {
-        console.log('[CodiceSwManager] SW registrado. Scope:', reg.scope);
-        _trackRegistration(reg);
-
-        // Verificar actualizaciones cada vez que la app recupera foco
-        document.addEventListener('visibilitychange', () => {
-          if (document.visibilityState === 'visible') reg.update().catch(() => {});
-        });
-      })
-      .catch(e => console.warn('[CodiceSwManager] Registro fallido:', e.message));
-
-    /* ── Escuchar mensajes del SW ── */
-    navigator.serviceWorker.addEventListener('message', _onSwMessage);
-
-    /* ── Detectar pérdida / recuperación de conexión ── */
-    window.addEventListener('online', () => {
-      _online = true;
-      _showOfflineBanner(false);
-      _updateQueueBadge(0);
-
-      // Notificar al SW
-      _postToSW({ type: 'CLIENT_ONLINE' });
-
-      // Intentar Background Sync nativo; si no, encolar manualmente
-      registerPendingSync();
-      _clientFlushQueue();
-
-      // Toast de conexión restaurada
-      if (typeof Toast !== 'undefined') {
-        const q = _queueLen;
-        const msg = q > 0
-          ? `📶 Conexión restaurada — sincronizando ${q} operación${q !== 1 ? 'es' : ''}…` 
-          : '📶 Conexión restaurada';
-        Toast.info(msg, 4000);
-      }
-
-      _stopSyncPolling();
-    });
-
-    window.addEventListener('offline', () => {
-      _online = false;
-      _showOfflineBanner(true);
-
-      if (typeof Toast !== 'undefined') {
-        Toast.info('📡 Sin conexión — los cambios se guardan localmente', 4500);
-      }
-
-      // Empezar polling de fallback por si Background Sync no está disponible
-      _startSyncPolling();
-    });
-
-    /* ── Estado inicial ── */
-    if (!navigator.onLine) {
-      _showOfflineBanner(true);
-      _startSyncPolling();
-    }
-
-    /* ── Controlar recarga cuando hay controllerchange (nueva versión activa) ── */
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      // Esto ocurre cuando el nuevo SW toma control tras skipWaiting.
-      // Recargamos para que el usuario tenga la versión más fresca.
-      console.log('[CodiceSwManager] Nuevo SW activo — recargando.');
-      window.location.reload();
-    });
-  }
-
-  /* ── API pública ─────────────────────────────────────────────── */
-
-  /** Aplicar la actualización pendiente (llamado por el botón de update toast) */
-  function applyUpdate() {
-    _showUpdateToast(false);
-    if (_waiting) {
-      // Caso 1: hay un SW esperando → activarlo, el controllerchange disparará el reload
-      _waiting.postMessage({ type: 'SKIP_WAITING' });
-    } else if (_reg?.waiting) {
-      _reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-    } else {
-      // Caso 2: el nuevo SW ya está activo (llegamos por SW_UPDATED) → recargar directo
-      window.location.reload();
-    }
-  }
-
-  /** Enviar mensaje al SW activo */
-  function _postToSW(message) {
-    const controller = navigator.serviceWorker.controller;
-    if (controller) {
-      try { controller.postMessage(message); } catch (_) {}
-    }
-  }
-
-  /** Informar al SW cuántas operaciones hay en cola (para el badge) */
-  function updateQueueCount(n) {
-    _updateQueueBadge(n);
-    if (n > 0 && !_online) {
-      registerPendingSync(); // asegurar que Background Sync está registrado
-    }
-  }
-
-  /** ¿Está la app online actualmente? */
-  function isOnline() { return _online; }
-
-  return { init, applyUpdate, updateQueueCount, isOnline, registerPendingSync };
-})();
-
-/* ── Parche en OfflineEngine para sincronizar el badge de cola ────────────── */
-/* Si OfflineEngine existe, parchear enqueue/_flushQueue para mantener         */
-/* sincronizado el contador de operaciones pendientes del SW.                  */
-document.addEventListener('DOMContentLoaded', () => {
-  if (typeof OfflineEngine === 'undefined') return;
-
-  const _origEnqueue = OfflineEngine.enqueue.bind(OfflineEngine);
-  const _origInit    = OfflineEngine.init.bind(OfflineEngine);
-
-  // Sobrescribir init para no re-registrar el SW (lo hace CodiceSwManager)
-  OfflineEngine.init = function patchedInit() {
-    // Solo inicializar la parte de eventos online/offline del OfflineEngine,
-    // sin llamar a _registerSW() (el SW ya está gestionado por CodiceSwManager).
-    window.addEventListener('online', () => {
-      if (typeof ReactiveState !== 'undefined') ReactiveState.emit('online', { online: true });
-    });
-    window.addEventListener('offline', () => {
-      if (typeof ReactiveState !== 'undefined') ReactiveState.emit('online', { online: false });
-    });
-  };
-
-  // Actualizar badge cuando se encola algo
-  OfflineEngine.enqueue = function patchedEnqueue(fn, label) {
-    _origEnqueue(fn, label);
-    const q = OfflineEngine.getQueue();
-    if (typeof window.CodiceSwManager !== 'undefined') {
-      window.CodiceSwManager.updateQueueCount(q.length);
-      window.CodiceSwManager.registerPendingSync();
-    }
-  };
-});
-
-</script>
 
 <script type="module">
 /* ═══════════════════════════════════════════════════════════════
@@ -18507,15 +17434,7 @@ document.addEventListener('DOMContentLoaded', () => {
     SplashScreen.hide({fadeOutDuration:300}).catch(()=>{});
   }
 
-  // ── Inicializar plugin GoogleAuth nativo ──────────────────────────────────
-  // Esto prepara el plugin para que Auth.loginWithGoogle() pueda usarlo
-  if(GoogleAuth){
-    GoogleAuth.initialize({
-      clientId: '332267079461-web.apps.googleusercontent.com',
-      scopes: ['profile','email'],
-      grantOfflineAccess: false
-    }).catch(e => console.warn('[Capacitor] GoogleAuth.initialize:', e));
-  }
+  // Google Sign-In eliminado — solo Email/Password
 
   // ── Teclado — empuja contenido arriba sin redimensionar el cuerpo ─────────
   if(Keyboard){

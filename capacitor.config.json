@@ -17,19 +17,20 @@
       "fonts.googleapis.com",
       "fonts.gstatic.com",
       "cdn.jsdelivr.net"
-    ]
+    ],
+    "hostname": "codice-4d18f.firebaseapp.com"
   },
   "android": {
     "allowMixedContent": false,
     "captureInput": true,
     "webContentsDebuggingEnabled": false,
     "backgroundColor": "#08080e",
-    "overrideUserAgent": "Mozilla/5.0 (Linux; Android 14; Códice) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
     "hideStatusBar": false,
     "keepRunning": true,
     "useLegacyBridge": false,
     "initialFocus": true,
-    "minWebViewVersion": 60
+    "minWebViewVersion": 60,
+    "overScrollEnabled": false
   },
   "plugins": {
     "SplashScreen": {
@@ -51,6 +52,14 @@
       "resize": "body",
       "style": "DARK",
       "resizeOnFullScreen": true
+    },
+    "GoogleAuth": {
+      "scopes": [
+        "profile",
+        "email"
+      ],
+      "serverClientId": "332267079461-web.apps.googleusercontent.com",
+      "forceCodeForRefreshToken": true
     }
   }
 }

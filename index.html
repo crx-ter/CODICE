@@ -15773,6 +15773,10 @@ const _listeners  = new Set();   // suscriptores externos
 const _provider = new GoogleAuthProvider();
 _provider.addScope("profile");
 _provider.addScope("email");
+// FIX: Forzar siempre el selector de cuenta (no reutiliza sesión del sistema)
+_provider.setCustomParameters({
+  prompt: 'select_account'
+});
 
 // ── getRedirectResult — procesar resultado de redirect ANTES de resolver auth ──
 // Guardamos la promesa para que onAuthStateChanged pueda esperarla si recibe null.
@@ -15859,26 +15863,73 @@ function _mapUser(fbUser) {
 // ── API pública ───────────────────────────────────────────────
 const Auth = {
 
-  /** Login con Google — popup primero (evita el problema de 2FA/redirect en Android) */
+  /** Login con Google — nativo en Capacitor (hoja de cuentas del sistema), popup en web */
   async loginWithGoogle() {
-    // En Android WebView, signInWithRedirect causa problemas: redirige al navegador
-    // del sistema, pide 2FA siempre, y no permite cambiar de cuenta.
-    // Usamos signInWithPopup que abre un diálogo nativo dentro de la app.
+    // ── Estrategia de login por plataforma ──────────────────────────────────
+    //
+    // CAPACITOR (APK): @capacitor-community/google-auth
+    //   → Abre la hoja de selección de cuentas del sistema operativo
+    //   → Igual que Gmail, ChatGPT, Notion, etc.
+    //   → NO sale de la app, NO pide 2FA si ya hay sesión activa
+    //   → El usuario puede cambiar de cuenta libremente
+    //
+    // WEB (navegador): signInWithPopup de Firebase
+    //   → Abre Chrome Custom Tab con el flujo OAuth de Google
+    //   → Correcto para PWA en navegador
+    //
+    // NUNCA: signInWithRedirect
+    //   → En WebView redirige al Chrome del sistema (sale de la app)
+    //   → Siempre pide email + contraseña + 2FA
+    //   → La vuelta puede dejar pantalla negra
+    //   → Fija la cuenta (no permite cambiar)
+
+    const isCapacitor = typeof window.Capacitor !== 'undefined' &&
+                        window.Capacitor.isNativePlatform &&
+                        window.Capacitor.isNativePlatform();
+
+    // ── Ruta Capacitor: GoogleAuth nativo ────────────────────────────────────
+    if (isCapacitor) {
+      try {
+        const GoogleAuth = window.Capacitor?.Plugins?.GoogleAuth;
+        if (GoogleAuth) {
+          // Intentar login nativo (hoja de cuentas del sistema)
+          const googleUser = await GoogleAuth.signIn();
+          // Construir credencial Firebase con el token del plugin
+          const { GoogleAuthProvider: GAP, signInWithCredential } = await import(
+            'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js'
+          );
+          const credential = GAP.credential(googleUser.authentication.idToken);
+          const result = await signInWithCredential(_auth, credential);
+          return { ok: true, user: _mapUser(result.user) };
+        }
+        // Plugin no disponible — caer en popup
+        console.warn('[Auth] GoogleAuth plugin no disponible, usando popup');
+      } catch (e) {
+        if (e.message === 'The user cancelled the sign-in flow.' ||
+            e.code === 'SIGN_IN_CANCELLED') {
+          return { ok: false, cancelled: true };
+        }
+        console.error('[Auth] GoogleAuth nativo error:', e);
+        // No retornar aquí — caer en popup como respaldo
+      }
+    }
+
+    // ── Ruta Web / respaldo: signInWithPopup ─────────────────────────────────
     try {
       const result = await signInWithPopup(_auth, _provider);
       return { ok: true, user: _mapUser(result.user) };
     } catch (e) {
-      // Si popup falla (bloqueado), intentar redirect como último recurso
-      if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user') {
-        try {
-          await signInWithRedirect(_auth, _provider);
-          return { ok: true, redirect: true };
-        } catch (e2) {
-          console.error("[Auth] loginWithGoogle redirect fallback:", e2);
-          return { ok: false, error: e2.message };
-        }
+      if (e.code === 'auth/popup-closed-by-user' ||
+          e.code === 'auth/cancelled-popup-request') {
+        return { ok: false, cancelled: true };
       }
-      console.error("[Auth] loginWithGoogle popup:", e);
+      if (e.code === 'auth/popup-blocked') {
+        return { ok: false, error: 'El popup fue bloqueado. Verifica que los Custom Tabs están habilitados en tu dispositivo.' };
+      }
+      if (e.code === 'auth/unauthorized-domain') {
+        return { ok: false, error: 'Dominio no autorizado. Ve a Firebase Console > Auth > Authorized domains y agrega el dominio.' };
+      }
+      console.error("[Auth] loginWithGoogle popup:", e.code, e.message);
       return { ok: false, error: e.message };
     }
   },
@@ -16810,11 +16861,24 @@ async function _lsHandleGoogle(){
     console.error('[LOGIN] Error inesperado:', e);
     res = { ok: false, error: e.message };
   }
-  if(res && res.redirect) return; // redirect en curso, la página se recargará
-  if(res.ok){ document.getElementById('ls-load-msg')&&(document.getElementById('ls-load-msg').textContent='¡Bienvenido!'); return; }
+  // FIX: Nunca usar redirect en Capacitor (causaba pantalla negra y 2FA siempre)
+  // if(res && res.redirect) return;  ← eliminado
+
+  if(res.ok){
+    const msg = document.getElementById('ls-load-msg');
+    if(msg) msg.textContent='¡Bienvenido!';
+    // FIX: El listener onUserChange en _registerPostBootAuthListener se encarga
+    // de ocultar el LoginScreen. Aquí solo actualizamos el mensaje de carga.
+    return;
+  }
+  // FIX: Si el usuario cerró el popup (cancelled), volver al estado de selección
+  // de cuenta limpiamente, sin quedar en pantalla negra ni estado de carga.
   if(res.cancelled){ _lsPhase='accounts';_lsRender(); return; }
+
+  // Error real — mostrar mensaje y botón de reintentar
   _lsPhase='error';_lsRender();
-  document.getElementById('ls-err-msg')&&(document.getElementById('ls-err-msg').textContent=res.error||'Error desconocido');
+  const errMsg = document.getElementById('ls-err-msg');
+  if(errMsg) errMsg.textContent = res.error||'Error desconocido. Inténtalo de nuevo.';
 }
 
 function _lsEnterAccount(){
@@ -18145,47 +18209,88 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ══ CAPACITOR NATIVE INIT ══ */
 (function initCapacitor(){
   if(typeof window.Capacitor === 'undefined') return;
-  const { StatusBar, SplashScreen, Haptics, Keyboard } = window.Capacitor.Plugins || {};
+  const { StatusBar, SplashScreen, Haptics, Keyboard, GoogleAuth } = window.Capacitor.Plugins || {};
 
-  // Status bar — dark overlay, transparent background
+  // ── Status bar borde a borde (edge-to-edge) — igual que apps nativas ─────
   if(StatusBar){
     StatusBar.setStyle({style:'DARK'}).catch(()=>{});
     StatusBar.setBackgroundColor({color:'#08080e'}).catch(()=>{});
+    // overlay:false = la barra de estado ocupa su propio espacio (más nativo)
     StatusBar.setOverlaysWebView({overlay:false}).catch(()=>{});
   }
 
-  // Hide splash once DOM is ready
+  // ── Ocultar splash screen con fade suave ─────────────────────────────────
   if(SplashScreen){
-    SplashScreen.hide({fadeOutDuration:200}).catch(()=>{});
+    SplashScreen.hide({fadeOutDuration:300}).catch(()=>{});
   }
 
-  // Keyboard — push content up, don't resize body
+  // ── Inicializar plugin GoogleAuth nativo ──────────────────────────────────
+  // Esto prepara el plugin para que Auth.loginWithGoogle() pueda usarlo
+  if(GoogleAuth){
+    GoogleAuth.initialize({
+      clientId: '332267079461-web.apps.googleusercontent.com',
+      scopes: ['profile','email'],
+      grantOfflineAccess: false
+    }).catch(e => console.warn('[Capacitor] GoogleAuth.initialize:', e));
+  }
+
+  // ── Teclado — empuja contenido arriba sin redimensionar el cuerpo ─────────
   if(Keyboard){
     Keyboard.setAccessoryBarVisible({isVisible:false}).catch(()=>{});
     Keyboard.setScroll({isDisabled:false}).catch(()=>{});
     window.addEventListener('keyboardWillShow', e => {
+      document.documentElement.style.setProperty('--keyboard-height', (e.keyboardHeight||0)+'px');
       document.body.style.paddingBottom = (e.keyboardHeight||0)+'px';
     });
     window.addEventListener('keyboardWillHide', () => {
+      document.documentElement.style.setProperty('--keyboard-height', '0px');
       document.body.style.paddingBottom = '';
+    });
+    window.addEventListener('keyboardDidShow', () => {
+      // Asegurarse de que el input activo es visible
+      const active = document.activeElement;
+      if(active && active.scrollIntoView) active.scrollIntoView({block:'nearest',behavior:'smooth'});
     });
   }
 
-  // Hardware back button — close modals/AI panel first
+  // ── Deshabilitar overscroll nativo (evita el "rebote" de WebView) ─────────
+  // Esto hace que la app se sienta más como app nativa y menos como web
+  document.body.style.overscrollBehavior = 'none';
+  document.documentElement.style.overscrollBehavior = 'none';
+
+  // ── Deshabilitar selección de texto (comportamiento nativo de apps) ────────
+  // Solo en zonas que no son inputs/textareas
+  document.addEventListener('selectstart', function(e){
+    const tag = e.target?.tagName?.toLowerCase();
+    if(!['input','textarea','[contenteditable]'].includes(tag) &&
+       !e.target?.closest('[contenteditable]')){
+      e.preventDefault();
+    }
+  });
+
+  // ── Botón físico Atrás — cierra paneles/modales como app nativa ───────────
   document.addEventListener('backbutton', function(e){
     e.preventDefault();
-    // Close AI panel if open
+    // Cerrar panel de IA si está abierto
     const aiPanel = document.getElementById('ai-panel');
     if(aiPanel && !aiPanel.classList.contains('hidden')){
       if(typeof closeAI === 'function') closeAI(); return;
     }
-    // Close any open modal
-    const openModal = document.querySelector('.modal.open, .modal-overlay:not(\.hidden)');
+    // Cerrar cualquier modal abierto
+    const openModal = document.querySelector('.modal.open, .modal-overlay:not(.hidden)');
     if(openModal){ openModal.classList.add('hidden'); return; }
-    // Close sidebar on mobile
-    const sb = document.querySelector('.sidebar:not(\.collapsed)');
+    // Cerrar sidebar en móvil
+    const sb = document.querySelector('.sidebar:not(.collapsed)');
     if(sb && window.innerWidth < 768){ if(typeof toggleSidebar==='function') toggleSidebar(); return; }
   }, false);
+
+  // ── Vibración táctil en botones (feedback háptico como apps nativas) ──────
+  if(Haptics){
+    document.addEventListener('click', function(e){
+      const btn = e.target?.closest('button, .btn, [role="button"]');
+      if(btn){ Haptics.impact({style:'LIGHT'}).catch(()=>{}); }
+    }, {passive:true});
+  }
 })();
 </script>
 </body>

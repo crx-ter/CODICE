@@ -65,14 +65,10 @@ jobs:
         env:
           CI: true
 
-      # ── 6b. Sync con todos los plugins (incluye GoogleAuth) ──────────────────
+      # ── 6b. Sync plugins ─────────────────────────────────────────────────────
       - name: Sync plugins
         run: |
           npx cap sync android
-            echo "✅ google-auth plugin presente"
-          else
-            echo "⚠️ google-auth plugin no encontrado"
-          fi
 
       # ── 7. Permisos en AndroidManifest ───────────────────────────────────────
       - name: Configurar AndroidManifest

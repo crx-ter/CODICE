@@ -41,8 +41,7 @@ jobs:
             @capacitor/android@6.1.2 \
             @capacitor/splash-screen@6.0.1 \
             @capacitor/status-bar@6.0.1 \
-            @capacitor/keyboard@6.0.2 \
-            @capacitor-community/google-auth@3.4.0
+            @capacitor/keyboard@6.0.2
 
       # ── 5. Preparar carpeta www ───────────────────────────────────────────────
       - name: Preparar www
@@ -70,7 +69,6 @@ jobs:
       - name: Sync plugins
         run: |
           npx cap sync android
-          if [ -d "node_modules/@capacitor-community/google-auth" ]; then
             echo "✅ google-auth plugin presente"
           else
             echo "⚠️ google-auth plugin no encontrado"

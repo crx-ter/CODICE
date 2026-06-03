@@ -402,6 +402,12 @@ async function _handleRegister() {
     _setPhase('verify');
     return;
   }
+  // Si el email ya existe como cuenta Google, mostrar mensaje especial
+  if (res.hasGoogle) {
+    _showError('⚠️ Este email ya tiene una cuenta de Google. Usa el botón "Continuar con Google" para entrar.');
+    _setPhase('login'); // redirigir al panel de login para que use Google
+    return;
+  }
   _showError(_friendlyError(res.error));
 }
 
@@ -457,6 +463,7 @@ function _friendlyError(code = '') {
     'auth/wrong-password':       'Contraseña incorrecta.',
     'auth/invalid-credential':   'Email o contraseña incorrectos.',
     'auth/email-already-in-use': 'Ya existe una cuenta con ese email.',
+    'auth/email-already-in-use:google': '⚠️ Este email ya tiene cuenta Google. Inicia sesión con Google arriba.',
     'auth/weak-password':        'La contraseña es muy débil (mín. 6 caracteres).',
     'auth/invalid-email':        'El email no es válido.',
     'auth/too-many-requests':    'Demasiados intentos. Espera unos minutos.',

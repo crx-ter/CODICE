@@ -21,6 +21,7 @@ import {
   getRedirectResult, signOut, onAuthStateChanged,
   createUserWithEmailAndPassword, signInWithEmailAndPassword,
   sendEmailVerification, sendPasswordResetEmail, reload,
+  fetchSignInMethodsForEmail, EmailAuthProvider, linkWithCredential,
   doc, setDoc, getDoc, serverTimestamp
 } from "./firebase.js";
 
@@ -111,16 +112,53 @@ function _mapUser(fbUser) {
 // ── API pública ───────────────────────────────────────────────
 const Auth = {
 
-  /** Registro con email/contraseña — envía verificación automáticamente */
+  /** Registro con email/contraseña — envía verificación automáticamente.
+   *  Si el email ya existe como cuenta Google, ofrece vincular las credenciales. */
   async registerWithEmail(email, password) {
     try {
       const cred = await createUserWithEmailAndPassword(_auth, email, password);
       await sendEmailVerification(cred.user);
       return { ok: true, needsVerification: true };
     } catch (e) {
+      // Si el email ya está registrado (posiblemente con Google)
+      if (e.code === 'auth/email-already-in-use') {
+        try {
+          const methods = await fetchSignInMethodsForEmail(_auth, email);
+          if (methods.includes('google.com')) {
+            return { ok: false, error: e.code, hasGoogle: true,
+                     hint: 'Este email ya tiene cuenta de Google. Inicia sesión con Google y luego vincula tu contraseña desde ajustes.' };
+          }
+        } catch (_) {}
+        return { ok: false, error: e.code };
+      }
       console.error("[Auth] registerWithEmail:", e);
       return { ok: false, error: e.code || e.message };
     }
+  },
+
+  /** Vincula email/contraseña a la cuenta Google activa.
+   *  Llámalo DESPUÉS de loginWithGoogle() cuando el usuario quiere también
+   *  poder entrar con email+contraseña. */
+  async linkEmailToCurrentGoogle(email, password) {
+    try {
+      const user = _auth.currentUser;
+      if (!user) return { ok: false, error: 'No hay sesión activa de Google' };
+      const credential = EmailAuthProvider.credential(email, password);
+      const result = await linkWithCredential(user, credential);
+      await sendEmailVerification(result.user);
+      return { ok: true, needsVerification: true };
+    } catch (e) {
+      console.error("[Auth] linkEmailToCurrentGoogle:", e);
+      return { ok: false, error: e.code || e.message };
+    }
+  },
+
+  /** Elimina TODOS los usuarios de Firebase Auth — solo para desarrollo.
+   *  En producción, usar la consola de Firebase. */
+  async deleteAllAccounts() {
+    // Esta operación debe hacerse desde Firebase Console > Authentication > Users
+    // No es posible borrar otros usuarios desde el cliente por seguridad.
+    return { ok: false, error: 'Usa Firebase Console para eliminar cuentas masivamente.' };
   },
 
   /** Login con email/contraseña */

@@ -25,6 +25,8 @@ import { getAuth, GoogleAuthProvider, signInWithPopup,
          signOut, onAuthStateChanged,
          setPersistence, browserLocalPersistence }
                                    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { fetchSignInMethodsForEmail, EmailAuthProvider, linkWithCredential }
+                                   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, doc, setDoc, getDoc,
          collection, onSnapshot, serverTimestamp }
                                    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
@@ -52,4 +54,5 @@ export { _app, _auth, _db, _stor,
          GoogleAuthProvider, signInWithPopup, signInWithRedirect,
          getRedirectResult, signOut, onAuthStateChanged,
          createUserWithEmailAndPassword, signInWithEmailAndPassword,
-         sendEmailVerification, sendPasswordResetEmail, reload };
+         sendEmailVerification, sendPasswordResetEmail, reload,
+         fetchSignInMethodsForEmail, EmailAuthProvider, linkWithCredential };

@@ -16546,7 +16546,7 @@ function _startGalaxyCanvas(canvas){
 /* ── HTML del Login Screen ── */
 const _HTML = `
 <div id="login-screen" style="position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;font-family:var(--fb);overflow:hidden;background:#04040e">
-  <script>
+  <scr\ipt>
     // Ocultar login inmediatamente si ya hay sesión — evita flash de contenido
     try {
       const _fbAuth = JSON.parse(localStorage.getItem('firebase:authUser:AIzaSyDLQ3dHp-YV-vObebnEXEssb50UDeheexM:[DEFAULT]') || 'null');
@@ -16554,7 +16554,7 @@ const _HTML = `
         document.getElementById('login-screen').style.display = 'none';
       }
     } catch(e) {}
-  </script>
+  <\/script>
   <canvas id="login-galaxy-canvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></canvas>
 
   <!-- Overlay morado galaxia -->

@@ -88,6 +88,16 @@ jobs:
           grep "uses-permission" "$MANIFEST"
 
       # ── 7b. Custom Tabs para Google Sign-In ──────────────────────────────────
+      - name: Configurar Deep Link para OAuth
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if ! grep -q "codice-4d18f.web.app" "$MANIFEST"; then
+            sed -i 's|</application>|<activity android:name="com.getcapacitor.BridgeActivity" android:exported="true"><intent-filter android:autoVerify="true"><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="https" android:host="codice-4d18f.web.app"/></intent-filter></activity>\n    </application>|' "$MANIFEST"
+            echo "Deep link OK"
+          else
+            echo "Deep link ya presente"
+          fi
+
       - name: Habilitar Custom Tabs
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"

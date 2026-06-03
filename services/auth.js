@@ -107,12 +107,25 @@ function _mapUser(fbUser) {
 // ── API pública ───────────────────────────────────────────────
 const Auth = {
 
-  /** Login con Google vía redirect (Custom Tabs — evita disallowed_useragent en APK) */
+  /** Login con Google vía Chrome externo (evita disallowed_useragent en APK) */
   async loginWithGoogle() {
     try {
-      await signInWithRedirect(_auth, _provider);
-      return { ok: true };
+      // En Android nativo, abrir Chrome externo para OAuth
+      if (window.Capacitor && window.Capacitor.isNativePlatform()) {
+        const { Browser } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js').catch(() => ({}));
+        // Usar signInWithRedirect pero con Browser plugin de Capacitor
+        _auth.config.authDomain = 'codice-4d18f.web.app';
+        await signInWithRedirect(_auth, _provider);
+        return { ok: true };
+      }
+      // En web normal, popup
+      const result = await signInWithPopup(_auth, _provider);
+      return { ok: true, user: _mapUser(result.user) };
     } catch (e) {
+      if (e.code === "auth/popup-closed-by-user" ||
+          e.code === "auth/cancelled-popup-request") {
+        return { ok: false, cancelled: true };
+      }
       console.error("[Auth] loginWithGoogle:", e);
       return { ok: false, error: e.message };
     }

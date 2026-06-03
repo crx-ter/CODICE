@@ -1,198 +1,282 @@
 /* ═══════════════════════════════════════════════════════════════
-   LOGIN SCREEN — CÓDICE
-   Autenticación con email/contraseña + verificación por Gmail.
-   También mantiene Google Sign-In para la versión web.
+   LOGIN SCREEN — CÓDICE  (v4 — Email/Password only)
 
-   USO: LoginScreen.show()  /  LoginScreen.hide()
+   Flujos:
+     • Inicio de sesión
+     • Registro con verificación de email por código visual
+     • Recuperar contraseña (envío por correo)
+     • Pantalla de "revisa tu correo" unificada
+
+   USO:  LoginScreen.show()  /  LoginScreen.hide()
 ═══════════════════════════════════════════════════════════════ */
 
 import Auth from "../services/auth.js";
 
 // ── HTML ──────────────────────────────────────────────────────
 const _HTML = `
-<div id="login-screen" style="
+<div id="ls-root" style="
   position:fixed;inset:0;z-index:10000;
   background:var(--bg);
   display:flex;align-items:center;justify-content:center;
   background-image:
-    radial-gradient(ellipse 80% 50% at 20% 10%, rgba(124,140,255,.18), transparent),
-    radial-gradient(ellipse 60% 40% at 80% 90%, rgba(176,108,255,.13), transparent),
-    radial-gradient(ellipse 50% 50% at 50% 50%, rgba(0,212,255,.04), transparent);
+    radial-gradient(ellipse 80% 50% at 20% 10%,  rgba(124,140,255,.18), transparent),
+    radial-gradient(ellipse 60% 40% at 80% 90%,  rgba(176,108,255,.13), transparent),
+    radial-gradient(ellipse 50% 50% at 50% 50%,  rgba(0,212,255,.04),   transparent);
   font-family:var(--fb);overflow-y:auto;
 ">
+  <!-- Fondo ruido -->
   <div style="position:absolute;inset:0;pointer-events:none;opacity:.022;
     background:url('data:image/svg+xml,%3Csvg viewBox=%270 0 300 300%27 xmlns=%27http://www.w3.org/2000/svg%27%3E%3Cfilter id=%27n%27%3E%3CfeTurbulence type=%27fractalNoise%27 baseFrequency=%27.85%27 numOctaves=%274%27 stitchTiles=%27stitch%27/%3E%3C/filter%3E%3Crect width=%27100%25%27 height=%27100%25%27 filter=%27url(%23n)%27/%3E%3C/svg%3E');
     background-size:200px 200px;"></div>
 
-  <div class="login-orb login-orb-1"></div>
-  <div class="login-orb login-orb-2"></div>
-  <div class="login-orb login-orb-3"></div>
+  <!-- Orbes decorativos -->
+  <div class="ls-orb ls-orb-1"></div>
+  <div class="ls-orb ls-orb-2"></div>
+  <div class="ls-orb ls-orb-3"></div>
 
-  <div class="login-card" id="login-card">
+  <div class="ls-card" id="ls-card">
 
-    <!-- Logo -->
-    <div class="login-logo-wrap">
-      <div class="login-logo-ring">
+    <!-- Logo / Marca -->
+    <div class="ls-logo-wrap">
+      <div class="ls-logo-ring">
         <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-          <rect x="6" y="6" width="10" height="10" rx="2" fill="var(--ac)" opacity=".9"/>
-          <rect x="20" y="6" width="10" height="10" rx="2" fill="var(--purple)" opacity=".7"/>
-          <rect x="6" y="20" width="10" height="10" rx="2" fill="var(--cyan)" opacity=".6"/>
-          <rect x="20" y="20" width="10" height="10" rx="2" fill="var(--ac)" opacity=".5"/>
+          <rect x="6"  y="6"  width="10" height="10" rx="2" fill="var(--ac)"     opacity=".9"/>
+          <rect x="20" y="6"  width="10" height="10" rx="2" fill="var(--purple)" opacity=".7"/>
+          <rect x="6"  y="20" width="10" height="10" rx="2" fill="var(--cyan)"   opacity=".6"/>
+          <rect x="20" y="20" width="10" height="10" rx="2" fill="var(--ac)"     opacity=".5"/>
         </svg>
       </div>
     </div>
-    <h1 class="login-title">CÓDICE</h1>
-    <p class="login-sub">Sistema Operativo de Estudio IA</p>
-    <div class="login-divider"></div>
+    <h1 class="ls-title">CÓDICE</h1>
+    <p class="ls-sub">Sistema Operativo de Estudio IA</p>
+    <div class="ls-divider"></div>
 
-    <!-- ── FASE: selector login/registro ── -->
-    <div id="login-pre">
-      <p class="login-desc">Inicia sesión para sincronizar tus módulos,<br>clases y progreso en todos tus dispositivos.</p>
-
-      <button id="btn-go-login" class="login-btn-primary">Iniciar sesión</button>
-      <button id="btn-go-register" class="login-btn-secondary" style="margin-top:10px">Crear cuenta nueva</button>
-
-      <!-- Google solo en web -->
-      <div id="login-google-wrap">
-        <div class="login-or"><span>o</span></div>
-        <button id="login-google-btn" class="login-google-btn">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-            <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615Z" fill="#4285F4"/>
-            <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18Z" fill="#34A853"/>
-            <path d="M3.964 10.706A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.706V4.962H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.038l3.007-2.332Z" fill="#FBBC05"/>
-            <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.962L3.964 7.294C4.672 5.163 6.656 3.58 9 3.58Z" fill="#EA4335"/>
-          </svg>
-          Continuar con Google
-        </button>
-      </div>
-
-      <p class="login-legal">Al continuar, aceptas que tus datos de estudio se guardan en Firebase asociados a tu cuenta.</p>
+    <!-- ══ FASE: selector ══════════════════════════════════════ -->
+    <div id="ls-pre">
+      <p class="ls-desc">Inicia sesión para sincronizar tus módulos,<br>clases y progreso en todos tus dispositivos.</p>
+      <button id="ls-go-login"    class="ls-btn-primary">Iniciar sesión</button>
+      <button id="ls-go-register" class="ls-btn-secondary" style="margin-top:10px">Crear cuenta nueva</button>
+      <p class="ls-legal">Al continuar, aceptas que tus datos de estudio se guardan en Firebase asociados a tu cuenta.</p>
     </div>
 
-    <!-- ── FASE: login con email ── -->
-    <div id="login-email" style="display:none">
-      <p class="login-desc" style="margin-bottom:18px">Ingresa tu email y contraseña.</p>
-      <div class="login-field-wrap">
-        <label class="login-label">Email</label>
-        <input id="li-email" type="email" placeholder="tu@email.com" class="login-input" autocomplete="email"/>
+    <!-- ══ FASE: login ══════════════════════════════════════════ -->
+    <div id="ls-login" style="display:none">
+      <p class="ls-phase-title">Iniciar sesión</p>
+
+      <div class="ls-field">
+        <label class="ls-label" for="li-email">Correo electrónico</label>
+        <input id="li-email" type="email" placeholder="tu@correo.com"
+               class="ls-input" autocomplete="email"/>
       </div>
-      <div class="login-field-wrap" style="margin-top:12px">
-        <label class="login-label">Contraseña</label>
-        <div style="position:relative">
-          <input id="li-pass" type="password" placeholder="••••••••" class="login-input" autocomplete="current-password"/>
-          <button id="li-toggle-pass" class="login-eye-btn" tabindex="-1">👁</button>
+
+      <div class="ls-field" style="margin-top:12px">
+        <label class="ls-label" for="li-pass">Contraseña</label>
+        <div class="ls-pass-wrap">
+          <input id="li-pass" type="password" placeholder="••••••••"
+                 class="ls-input" autocomplete="current-password"/>
+          <button id="li-eye" class="ls-eye" tabindex="-1" aria-label="Mostrar contraseña">
+            <svg id="li-eye-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
         </div>
       </div>
-      <button id="li-forgot" class="login-link-btn" style="margin-top:6px">¿Olvidaste tu contraseña?</button>
-      <button id="li-submit" class="login-btn-primary" style="margin-top:18px">Entrar</button>
-      <button id="li-back" class="login-btn-ghost" style="margin-top:10px">← Volver</button>
+
+      <button id="li-forgot" class="ls-link-btn" style="margin-top:8px">
+        ¿Olvidaste tu contraseña?
+      </button>
+
+      <div id="li-error" class="ls-inline-error" style="display:none"></div>
+
+      <button id="li-submit" class="ls-btn-primary" style="margin-top:18px">
+        <span id="li-submit-txt">Entrar</span>
+        <span id="li-submit-spin" class="ls-btn-spin" style="display:none"></span>
+      </button>
+      <button id="li-back" class="ls-btn-ghost" style="margin-top:10px">← Volver</button>
     </div>
 
-    <!-- ── FASE: registro ── -->
-    <div id="login-register" style="display:none">
-      <p class="login-desc" style="margin-bottom:18px">Crea tu cuenta gratuita.</p>
-      <div class="login-field-wrap">
-        <label class="login-label">Email</label>
-        <input id="reg-email" type="email" placeholder="tu@email.com" class="login-input" autocomplete="email"/>
+    <!-- ══ FASE: registro ═══════════════════════════════════════ -->
+    <div id="ls-register" style="display:none">
+      <p class="ls-phase-title">Crear cuenta</p>
+
+      <div class="ls-field">
+        <label class="ls-label" for="reg-name">Nombre (opcional)</label>
+        <input id="reg-name" type="text" placeholder="Tu nombre"
+               class="ls-input" autocomplete="name"/>
       </div>
-      <div class="login-field-wrap" style="margin-top:12px">
-        <label class="login-label">Contraseña</label>
-        <div style="position:relative">
-          <input id="reg-pass" type="password" placeholder="Mín. 6 caracteres" class="login-input" autocomplete="new-password"/>
-          <button id="reg-toggle-pass" class="login-eye-btn" tabindex="-1">👁</button>
+
+      <div class="ls-field" style="margin-top:12px">
+        <label class="ls-label" for="reg-email">Correo electrónico</label>
+        <input id="reg-email" type="email" placeholder="tu@correo.com"
+               class="ls-input" autocomplete="email"/>
+      </div>
+
+      <div class="ls-field" style="margin-top:12px">
+        <label class="ls-label" for="reg-pass">Contraseña</label>
+        <div class="ls-pass-wrap">
+          <input id="reg-pass" type="password" placeholder="Mínimo 6 caracteres"
+                 class="ls-input" autocomplete="new-password"/>
+          <button id="reg-eye" class="ls-eye" tabindex="-1" aria-label="Mostrar contraseña">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+        <!-- Indicador de fortaleza -->
+        <div id="reg-strength" style="display:none;margin-top:8px">
+          <div class="ls-strength-bar"><div id="reg-strength-fill" class="ls-strength-fill"></div></div>
+          <span id="reg-strength-txt" class="ls-strength-txt"></span>
         </div>
       </div>
-      <div class="login-field-wrap" style="margin-top:12px">
-        <label class="login-label">Confirmar contraseña</label>
-        <div style="position:relative">
-          <input id="reg-pass2" type="password" placeholder="Repite la contraseña" class="login-input" autocomplete="new-password"/>
-          <button id="reg-toggle-pass2" class="login-eye-btn" tabindex="-1">👁</button>
+
+      <div class="ls-field" style="margin-top:12px">
+        <label class="ls-label" for="reg-pass2">Confirmar contraseña</label>
+        <div class="ls-pass-wrap">
+          <input id="reg-pass2" type="password" placeholder="Repite tu contraseña"
+                 class="ls-input" autocomplete="new-password"/>
+          <button id="reg-eye2" class="ls-eye" tabindex="-1" aria-label="Mostrar contraseña">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
         </div>
+        <div id="reg-match" class="ls-match-hint" style="display:none"></div>
       </div>
-      <div id="reg-strength" class="login-strength" style="margin-top:8px;display:none">
-        <div id="reg-strength-bar" class="login-strength-bar"></div>
-        <span id="reg-strength-txt" class="login-strength-txt"></span>
-      </div>
-      <button id="reg-submit" class="login-btn-primary" style="margin-top:18px">Crear cuenta</button>
-      <button id="reg-back" class="login-btn-ghost" style="margin-top:10px">← Volver</button>
+
+      <div id="reg-error" class="ls-inline-error" style="display:none"></div>
+
+      <button id="reg-submit" class="ls-btn-primary" style="margin-top:18px">
+        <span id="reg-submit-txt">Crear cuenta</span>
+        <span id="reg-submit-spin" class="ls-btn-spin" style="display:none"></span>
+      </button>
+      <button id="reg-back" class="ls-btn-ghost" style="margin-top:10px">← Volver</button>
     </div>
 
-    <!-- ── FASE: verificar email ── -->
-    <div id="login-verify" style="display:none;text-align:center">
-      <div style="font-size:2.5rem;margin-bottom:16px">📧</div>
-      <p style="font-size:.95rem;font-weight:600;color:var(--t0);margin-bottom:8px">Verifica tu email</p>
-      <p style="font-size:.82rem;color:var(--t1);line-height:1.6;margin-bottom:20px">
-        Te enviamos un correo a <strong id="verify-email-addr" style="color:var(--ac)"></strong>.<br>
-        Revisa tu bandeja de entrada y haz clic en el enlace para activar tu cuenta.
+    <!-- ══ FASE: recuperar contraseña ═══════════════════════════ -->
+    <div id="ls-forgot" style="display:none">
+      <p class="ls-phase-title">Recuperar contraseña</p>
+      <p class="ls-desc" style="margin-bottom:18px">
+        Ingresa tu correo y te enviaremos un enlace para restablecer tu contraseña.
       </p>
-      <button id="verify-resend" class="login-btn-secondary" style="margin-bottom:10px">Reenviar correo</button>
-      <button id="verify-done" class="login-btn-primary">Ya verifiqué, continuar</button>
-      <button id="verify-back" class="login-btn-ghost" style="margin-top:10px">← Volver al inicio</button>
-    </div>
 
-    <!-- ── FASE: recuperar contraseña ── -->
-    <div id="login-forgot" style="display:none">
-      <p class="login-desc" style="margin-bottom:18px">Ingresa tu email y te enviaremos un enlace para restablecer tu contraseña.</p>
-      <div class="login-field-wrap">
-        <label class="login-label">Email</label>
-        <input id="forgot-email" type="email" placeholder="tu@email.com" class="login-input"/>
+      <div class="ls-field">
+        <label class="ls-label" for="fgt-email">Correo electrónico</label>
+        <input id="fgt-email" type="email" placeholder="tu@correo.com"
+               class="ls-input" autocomplete="email"/>
       </div>
-      <button id="forgot-submit" class="login-btn-primary" style="margin-top:18px">Enviar enlace</button>
-      <button id="forgot-back" class="login-btn-ghost" style="margin-top:10px">← Volver</button>
+
+      <div id="fgt-error" class="ls-inline-error" style="display:none"></div>
+
+      <button id="fgt-submit" class="ls-btn-primary" style="margin-top:18px">
+        <span id="fgt-submit-txt">Enviar enlace</span>
+        <span id="fgt-submit-spin" class="ls-btn-spin" style="display:none"></span>
+      </button>
+      <button id="fgt-back" class="ls-btn-ghost" style="margin-top:10px">← Volver al inicio de sesión</button>
     </div>
 
-    <!-- ── FASE: loading ── -->
-    <div id="login-loading" style="display:none;text-align:center;padding:8px 0">
-      <div class="login-spinner"></div>
-      <p style="font-size:.8rem;color:var(--t2);margin-top:14px" id="login-loading-msg">Iniciando sesión…</p>
-    </div>
-
-    <!-- ── FASE: error ── -->
-    <div id="login-error" style="display:none">
-      <div class="login-error-box">
-        <span style="font-size:1.1rem">⚠️</span>
-        <p id="login-error-msg" style="font-size:.8rem;color:var(--red)">Error al iniciar sesión</p>
+    <!-- ══ FASE: revisar correo (verificación o reset) ══════════ -->
+    <div id="ls-check-email" style="display:none">
+      <!-- Icono sobre -->
+      <div style="display:flex;justify-content:center;margin-bottom:20px">
+        <div class="ls-mail-icon">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.5">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+            <polyline points="22,6 12,13 2,6"/>
+          </svg>
+        </div>
       </div>
-      <button id="login-retry-btn" class="login-btn-primary" style="margin-top:14px">Intentar de nuevo</button>
+
+      <p class="ls-phase-title" id="ce-title">Revisa tu correo</p>
+      <p class="ls-desc" id="ce-body">
+        Enviamos un correo a <strong id="ce-email" class="ls-email-hl"></strong>.
+        Sigue las instrucciones ahí.
+      </p>
+
+      <!-- Solo visible en modo verificación de cuenta nueva -->
+      <div id="ce-verify-actions" style="display:none">
+        <button id="ce-done" class="ls-btn-primary">Ya verifiqué mi correo</button>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:12px">
+          <span class="ls-tiny">¿No llegó?</span>
+          <button id="ce-resend" class="ls-link-btn">Reenviar correo</button>
+          <span id="ce-resend-cd" class="ls-tiny" style="display:none"></span>
+        </div>
+      </div>
+
+      <!-- Solo visible en modo reset contraseña -->
+      <div id="ce-reset-actions" style="display:none">
+        <p class="ls-tiny" style="margin-bottom:16px">
+          El enlace expira en 1 hora. Si no llega en unos minutos, revisa la carpeta de spam.
+        </p>
+        <button id="ce-reset-resend" class="ls-link-btn">Reenviar enlace</button>
+      </div>
+
+      <button id="ce-back-login" class="ls-btn-ghost" style="margin-top:14px">
+        Volver al inicio de sesión
+      </button>
     </div>
 
-  </div>
-</div>
+    <!-- ══ FASE: cargando ═══════════════════════════════════════ -->
+    <div id="ls-loading" style="display:none;text-align:center;padding:20px 0">
+      <div class="ls-spinner"></div>
+      <p id="ls-loading-msg" class="ls-desc" style="margin-top:16px;margin-bottom:0">Cargando…</p>
+    </div>
+
+  </div><!-- /ls-card -->
+</div><!-- /ls-root -->
 
 <style>
-.login-orb{position:absolute;border-radius:50%;pointer-events:none;filter:blur(80px);opacity:.35;animation:loginOrbDrift 8s ease-in-out infinite alternate;}
-.login-orb-1{width:420px;height:420px;top:-120px;left:-80px;background:radial-gradient(circle,var(--ac),transparent 70%);animation-delay:0s;}
-.login-orb-2{width:300px;height:300px;bottom:-80px;right:-60px;background:radial-gradient(circle,var(--purple),transparent 70%);animation-delay:-3s;}
-.login-orb-3{width:200px;height:200px;top:40%;left:60%;background:radial-gradient(circle,var(--cyan),transparent 70%);opacity:.15;animation-delay:-5s;}
-@keyframes loginOrbDrift{from{transform:translate(0,0) scale(1)}to{transform:translate(20px,15px) scale(1.06)}}
+/* ── Orbes ── */
+.ls-orb{position:absolute;border-radius:50%;pointer-events:none;filter:blur(80px);opacity:.35;animation:lsOrb 8s ease-in-out infinite alternate;}
+.ls-orb-1{width:420px;height:420px;top:-120px;left:-80px;background:radial-gradient(circle,var(--ac),transparent 70%);animation-delay:0s;}
+.ls-orb-2{width:300px;height:300px;bottom:-80px;right:-60px;background:radial-gradient(circle,var(--purple),transparent 70%);animation-delay:-3s;}
+.ls-orb-3{width:200px;height:200px;top:40%;left:60%;background:radial-gradient(circle,var(--cyan),transparent 70%);opacity:.15;animation-delay:-5s;}
+@keyframes lsOrb{from{transform:translate(0,0) scale(1)}to{transform:translate(20px,15px) scale(1.06)}}
 
-.login-card{
+/* ── Card ── */
+.ls-card{
   position:relative;z-index:1;
-  width:min(420px, calc(100vw - 32px));
-  background:rgba(14,14,26,0.82);
+  width:min(420px,calc(100vw - 32px));
+  background:rgba(14,14,26,.84);
   backdrop-filter:blur(40px) saturate(180%);
   -webkit-backdrop-filter:blur(40px) saturate(180%);
   border:1px solid rgba(255,255,255,.09);
   border-radius:24px;padding:40px 36px 36px;
-  box-shadow:0 32px 80px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.04) inset,0 1px 0 rgba(255,255,255,.12) inset;
-  animation:loginCardIn .45s cubic-bezier(.34,1.56,.64,1) forwards;
+  box-shadow:0 32px 80px rgba(0,0,0,.7),
+             0 0 0 1px rgba(255,255,255,.04) inset,
+             0 1px 0 rgba(255,255,255,.12) inset;
+  animation:lsCardIn .45s cubic-bezier(.34,1.56,.64,1) forwards;
   margin:24px auto;
 }
-@keyframes loginCardIn{from{opacity:0;transform:translateY(18px) scale(.97)}to{opacity:1;transform:none}}
+@keyframes lsCardIn{from{opacity:0;transform:translateY(18px) scale(.97)}to{opacity:1;transform:none}}
 
-.login-logo-wrap{display:flex;justify-content:center;margin-bottom:20px;}
-.login-logo-ring{width:64px;height:64px;border-radius:18px;background:rgba(124,140,255,.08);border:1px solid rgba(124,140,255,.18);display:flex;align-items:center;justify-content:center;box-shadow:0 0 28px rgba(124,140,255,.18),0 0 0 8px rgba(124,140,255,.04);animation:loginLogoPulse 3s ease-in-out infinite;}
-@keyframes loginLogoPulse{0%,100%{box-shadow:0 0 28px rgba(124,140,255,.18),0 0 0 8px rgba(124,140,255,.04)}50%{box-shadow:0 0 40px rgba(124,140,255,.30),0 0 0 14px rgba(124,140,255,.07)}}
+/* ── Logo ── */
+.ls-logo-wrap{display:flex;justify-content:center;margin-bottom:20px;}
+.ls-logo-ring{
+  width:64px;height:64px;border-radius:18px;
+  background:rgba(124,140,255,.08);border:1px solid rgba(124,140,255,.18);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 0 28px rgba(124,140,255,.18),0 0 0 8px rgba(124,140,255,.04);
+  animation:lsLogoPulse 3s ease-in-out infinite;
+}
+@keyframes lsLogoPulse{
+  0%,100%{box-shadow:0 0 28px rgba(124,140,255,.18),0 0 0 8px rgba(124,140,255,.04)}
+  50%    {box-shadow:0 0 40px rgba(124,140,255,.30),0 0 0 14px rgba(124,140,255,.07)}
+}
+.ls-title{
+  font-family:var(--fd);font-size:2.2rem;font-weight:800;letter-spacing:-2px;
+  text-align:center;
+  background:linear-gradient(145deg,#fff 0%,var(--ach) 50%,var(--purple) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+  filter:drop-shadow(0 0 30px var(--acg));margin-bottom:6px;
+}
+.ls-sub{text-align:center;font-size:.7rem;letter-spacing:.3em;color:var(--t2);text-transform:uppercase;font-weight:500;margin-bottom:0;}
+.ls-divider{height:1px;background:var(--b0);margin:24px 0;}
 
-.login-title{font-family:var(--fd);font-size:2.2rem;font-weight:800;letter-spacing:-2px;text-align:center;background:linear-gradient(145deg,#fff 0%,var(--ach) 50%,var(--purple) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;filter:drop-shadow(0 0 30px var(--acg));margin-bottom:6px;}
-.login-sub{text-align:center;font-size:.7rem;letter-spacing:.3em;color:var(--t2);text-transform:uppercase;font-weight:500;margin-bottom:0;}
-.login-divider{height:1px;background:var(--b0);margin:24px 0;}
-.login-desc{text-align:center;font-size:.84rem;color:var(--t1);line-height:1.6;margin-bottom:24px;}
+/* ── Tipografía ── */
+.ls-phase-title{font-size:1.05rem;font-weight:700;color:var(--t0);text-align:center;margin-bottom:16px;}
+.ls-desc{text-align:center;font-size:.84rem;color:var(--t1);line-height:1.6;margin-bottom:24px;}
+.ls-tiny{font-size:.74rem;color:var(--t2);}
+.ls-email-hl{color:var(--ac);}
+.ls-legal{text-align:center;font-size:.68rem;color:var(--t2);margin-top:16px;line-height:1.5;}
 
-/* Inputs */
-.login-field-wrap{display:flex;flex-direction:column;}
-.login-label{font-size:.75rem;color:var(--t2);margin-bottom:6px;font-weight:500;}
-.login-input{
+/* ── Inputs ── */
+.ls-field{display:flex;flex-direction:column;}
+.ls-label{font-size:.75rem;color:var(--t2);margin-bottom:6px;font-weight:500;}
+.ls-input{
   width:100%;padding:11px 14px;
   background:rgba(255,255,255,.05);
   border:1px solid var(--b1);border-radius:10px;
@@ -200,327 +284,420 @@ const _HTML = `
   outline:none;transition:border-color 200ms,box-shadow 200ms;
   box-sizing:border-box;
 }
-.login-input:focus{border-color:var(--ac);box-shadow:0 0 0 3px rgba(124,140,255,.15);}
-.login-input::placeholder{color:var(--t2);}
-.login-eye-btn{
+.ls-input:focus{border-color:var(--ac);box-shadow:0 0 0 3px rgba(124,140,255,.15);}
+.ls-input::placeholder{color:var(--t2);}
+.ls-input.ls-error-border{border-color:var(--red,#ff5f5f);}
+.ls-pass-wrap{position:relative;}
+.ls-pass-wrap .ls-input{padding-right:40px;}
+.ls-eye{
   position:absolute;right:10px;top:50%;transform:translateY(-50%);
-  background:none;border:none;cursor:pointer;font-size:.9rem;
+  background:none;border:none;cursor:pointer;
   color:var(--t2);padding:4px;line-height:1;
+  transition:color 200ms;
 }
+.ls-eye:hover{color:var(--t0);}
 
-/* Botones */
-.login-btn-primary{
-  width:100%;padding:13px 20px;
+/* ── Fortaleza de contraseña ── */
+.ls-strength-bar{height:3px;border-radius:2px;background:var(--b0);overflow:hidden;margin-bottom:4px;}
+.ls-strength-fill{height:100%;border-radius:2px;width:0;transition:width 300ms,background 300ms;}
+.ls-strength-txt{font-size:.72rem;color:var(--t2);}
+.ls-match-hint{font-size:.72rem;margin-top:5px;}
+
+/* ── Botones ── */
+.ls-btn-primary{
+  width:100%;padding:13px 20px;display:flex;align-items:center;justify-content:center;gap:8px;
   background:var(--ac);border:none;border-radius:12px;
   color:#fff;font-family:var(--fb);font-size:.9rem;font-weight:700;
   cursor:pointer;transition:all 200ms;
 }
-.login-btn-primary:hover{filter:brightness(1.15);transform:translateY(-1px);box-shadow:0 8px 24px rgba(124,140,255,.35);}
-.login-btn-primary:active{transform:scale(.98);}
+.ls-btn-primary:hover{filter:brightness(1.15);transform:translateY(-1px);box-shadow:0 8px 24px rgba(124,140,255,.35);}
+.ls-btn-primary:active{transform:scale(.98);}
+.ls-btn-primary:disabled{opacity:.5;cursor:not-allowed;transform:none;filter:none;}
 
-.login-btn-secondary{
+.ls-btn-secondary{
   width:100%;padding:12px 20px;
-  background:rgba(255,255,255,.06);
-  border:1px solid var(--b1);border-radius:12px;
+  background:rgba(255,255,255,.06);border:1px solid var(--b1);border-radius:12px;
   color:var(--t0);font-family:var(--fb);font-size:.88rem;font-weight:600;
   cursor:pointer;transition:all 200ms;
 }
-.login-btn-secondary:hover{background:rgba(255,255,255,.1);border-color:var(--b2);}
+.ls-btn-secondary:hover{background:rgba(255,255,255,.1);border-color:var(--b2);}
 
-.login-btn-ghost{
+.ls-btn-ghost{
   width:100%;padding:10px;background:none;border:none;
   color:var(--t2);font-family:var(--fb);font-size:.82rem;
   cursor:pointer;transition:color 200ms;
 }
-.login-btn-ghost:hover{color:var(--t0);}
+.ls-btn-ghost:hover{color:var(--t0);}
 
-.login-link-btn{
+.ls-link-btn{
   background:none;border:none;color:var(--ac);
   font-family:var(--fb);font-size:.78rem;cursor:pointer;
   padding:0;text-decoration:underline;text-underline-offset:3px;
+  transition:opacity 200ms;
+}
+.ls-link-btn:hover{opacity:.8;}
+
+/* ── Spinner en botón ── */
+.ls-btn-spin{
+  width:16px;height:16px;border-radius:50%;
+  border:2px solid rgba(255,255,255,.3);
+  border-top-color:#fff;
+  animation:spin .7s linear infinite;
+  flex-shrink:0;
 }
 
-/* Google */
-.login-or{text-align:center;position:relative;margin:18px 0 14px;}
-.login-or::before{content:'';position:absolute;top:50%;left:0;right:0;height:1px;background:var(--b0);}
-.login-or span{position:relative;background:rgba(14,14,26,0.82);padding:0 10px;font-size:.75rem;color:var(--t2);}
-.login-google-btn{
-  width:100%;display:flex;align-items:center;justify-content:center;gap:10px;
-  padding:13px 20px;background:var(--s2);border:1px solid var(--b1);border-radius:12px;
-  color:var(--t0);font-family:var(--fb);font-size:.9rem;font-weight:600;
-  cursor:pointer;transition:all 200ms;position:relative;overflow:hidden;
+/* ── Error inline ── */
+.ls-inline-error{
+  background:rgba(255,95,95,.1);border:1px solid rgba(255,95,95,.25);
+  border-radius:8px;padding:10px 12px;
+  font-size:.8rem;color:var(--red,#ff6b6b);
+  margin-top:12px;line-height:1.4;
 }
-.login-google-btn:hover{background:var(--s3);border-color:var(--b2);transform:translateY(-1px);box-shadow:0 8px 24px rgba(0,0,0,.3);}
 
-/* Strength */
-.login-strength{display:flex;align-items:center;gap:8px;}
-.login-strength-bar{flex:1;height:3px;border-radius:2px;background:var(--b0);position:relative;overflow:hidden;}
-.login-strength-bar::after{content:'';position:absolute;inset:0;border-radius:2px;transition:width 300ms,background 300ms;width:var(--sw,0%);background:var(--sc,var(--red));}
-.login-strength-txt{font-size:.72rem;color:var(--t2);white-space:nowrap;}
+/* ── Icono sobre ── */
+.ls-mail-icon{
+  width:64px;height:64px;border-radius:18px;
+  background:rgba(124,140,255,.08);border:1px solid rgba(124,140,255,.18);
+  display:flex;align-items:center;justify-content:center;
+}
 
-/* Spinner / error */
-.login-spinner{width:36px;height:36px;border-radius:50%;border:2px solid var(--b1);border-top-color:var(--ac);animation:spin .8s linear infinite;margin:0 auto;}
-.login-error-box{display:flex;align-items:center;gap:10px;background:var(--rd);border:1px solid rgba(255,95,95,.2);border-radius:10px;padding:12px 14px;}
-
-/* Legal */
-.login-legal{text-align:center;font-size:.68rem;color:var(--t2);margin-top:16px;line-height:1.5;}
+/* ── Loading ── */
+.ls-spinner{
+  width:36px;height:36px;border-radius:50%;margin:0 auto;
+  border:2px solid var(--b1);border-top-color:var(--ac);
+  animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
 </style>
 `;
 
-// ── Estado interno ─────────────────────────────────────────────
-let _currentPhase = 'pre';
+// ── Estado interno ────────────────────────────────────────────
+let _phase       = 'pre';
 let _pendingEmail = '';
+let _pendingMode  = 'verify';   // 'verify' | 'reset'
+let _resendTimer  = null;
+let _resendSecs   = 0;
 
 // ── Montar ────────────────────────────────────────────────────
 function _mount() {
-  if (document.getElementById('login-screen')) return;
+  if (document.getElementById('ls-root')) return;
   const wrap = document.createElement('div');
   wrap.innerHTML = _HTML;
   document.body.appendChild(wrap);
-  _wireEvents();
+  _wire();
 }
 
 // ── Eventos ───────────────────────────────────────────────────
-function _wireEvents() {
-  // Navegación entre fases
-  _on('btn-go-login',    'click', () => _setPhase('email'));
-  _on('btn-go-register', 'click', () => _setPhase('register'));
-  _on('li-back',         'click', () => _setPhase('pre'));
-  _on('reg-back',        'click', () => _setPhase('pre'));
-  _on('forgot-back',     'click', () => _setPhase('email'));
-  _on('verify-back',     'click', () => _setPhase('pre'));
-  _on('login-retry-btn', 'click', () => _setPhase('pre'));
+function _wire() {
+  // Navegación
+  _on('ls-go-login',    'click', () => _go('login'));
+  _on('ls-go-register', 'click', () => _go('register'));
+  _on('li-back',        'click', () => _go('pre'));
+  _on('reg-back',       'click', () => _go('pre'));
+  _on('fgt-back',       'click', () => _go('login'));
+  _on('li-forgot',      'click', () => _go('forgot'));
+  _on('ce-back-login',  'click', () => _go('login'));
 
   // Acciones
-  _on('li-submit',      'click', _handleLogin);
-  _on('reg-submit',     'click', _handleRegister);
-  _on('forgot-submit',  'click', _handleForgot);
-  _on('verify-done',    'click', _handleVerifyDone);
-  _on('verify-resend',  'click', _handleResend);
-  _on('login-google-btn','click', _handleGoogle);
-  _on('li-forgot',      'click', () => _setPhase('forgot'));
+  _on('li-submit',       'click', _doLogin);
+  _on('reg-submit',      'click', _doRegister);
+  _on('fgt-submit',      'click', _doForgot);
+  _on('ce-done',         'click', _doCheckVerified);
+  _on('ce-resend',       'click', _doResend);
+  _on('ce-reset-resend', 'click', _doResendReset);
 
   // Enter en inputs
-  _onEnter('li-pass',    _handleLogin);
-  _onEnter('li-email',   _handleLogin);
-  _onEnter('reg-pass2',  _handleRegister);
-  _onEnter('forgot-email', _handleForgot);
+  _enter('li-email',   _doLogin);
+  _enter('li-pass',    _doLogin);
+  _enter('reg-pass2',  _doRegister);
+  _enter('fgt-email',  _doForgot);
 
-  // Toggle contraseña
-  _togglePass('li-toggle-pass',  'li-pass');
-  _togglePass('reg-toggle-pass', 'reg-pass');
-  _togglePass('reg-toggle-pass2','reg-pass2');
+  // Toggle ojo
+  _eye('li-eye',  'li-pass');
+  _eye('reg-eye', 'reg-pass');
+  _eye('reg-eye2','reg-pass2');
 
-  // Fuerza de contraseña
-  const regPass = document.getElementById('reg-pass');
-  if (regPass) regPass.addEventListener('input', _checkStrength);
-
-  // Ocultar Google en APK nativo
-  if (window.Capacitor?.isNativePlatform?.()) {
-    const gw = document.getElementById('login-google-wrap');
-    if (gw) gw.style.display = 'none';
-  }
+  // Fortaleza y confirmación de contraseña
+  _q('#reg-pass')?.addEventListener('input',  _strength);
+  _q('#reg-pass2')?.addEventListener('input', _matchHint);
 }
 
-function _on(id, ev, fn) {
-  const el = document.getElementById(id);
-  if (el) el.addEventListener(ev, fn);
+function _q(sel) { return document.querySelector(sel); }
+function _id(id) { return document.getElementById(id); }
+function _on(id, ev, fn) { _id(id)?.addEventListener(ev, fn); }
+function _enter(id, fn) {
+  _id(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') fn(); });
 }
-
-function _onEnter(id, fn) {
-  const el = document.getElementById(id);
-  if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') fn(); });
-}
-
-function _togglePass(btnId, inputId) {
-  const btn = document.getElementById(btnId);
-  const inp = document.getElementById(inputId);
+function _eye(btnId, inputId) {
+  const btn = _id(btnId);
+  const inp = _id(inputId);
   if (!btn || !inp) return;
   btn.addEventListener('click', () => {
-    inp.type = inp.type === 'password' ? 'text' : 'password';
-    btn.textContent = inp.type === 'password' ? '👁' : '🙈';
+    const show = inp.type === 'password';
+    inp.type = show ? 'text' : 'password';
+    // Cambiar icono: ojo abierto / tachado
+    btn.innerHTML = show
+      ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`
+      : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
   });
 }
 
-function _checkStrength() {
-  const val = document.getElementById('reg-pass')?.value || '';
-  const bar = document.getElementById('reg-strength-bar');
-  const txt = document.getElementById('reg-strength-txt');
-  const wrap = document.getElementById('reg-strength');
-  if (!bar || !txt || !wrap) return;
-  wrap.style.display = val ? 'flex' : 'none';
-  let score = 0;
-  if (val.length >= 6)  score++;
-  if (val.length >= 10) score++;
-  if (/[A-Z]/.test(val)) score++;
-  if (/[0-9]/.test(val)) score++;
-  if (/[^A-Za-z0-9]/.test(val)) score++;
+// ── Fortaleza de contraseña ───────────────────────────────────
+function _strength() {
+  const val  = _id('reg-pass')?.value || '';
+  const wrap = _id('reg-strength');
+  const fill = _id('reg-strength-fill');
+  const txt  = _id('reg-strength-txt');
+  if (!wrap) return;
+  wrap.style.display = val ? '' : 'none';
+  let s = 0;
+  if (val.length >= 6)           s++;
+  if (val.length >= 10)          s++;
+  if (/[A-Z]/.test(val))         s++;
+  if (/[0-9]/.test(val))         s++;
+  if (/[^A-Za-z0-9]/.test(val)) s++;
   const levels = [
-    { w:'20%', c:'#ff5f5f', t:'Muy débil' },
-    { w:'40%', c:'#ff9f40', t:'Débil' },
-    { w:'60%', c:'#ffd040', t:'Regular' },
-    { w:'80%', c:'#7eff8a', t:'Buena' },
-    { w:'100%',c:'#7c8cff', t:'Fuerte' },
+    { w:'20%', c:'#ff5f5f', t:'Muy débil'   },
+    { w:'40%', c:'#ff9f40', t:'Débil'        },
+    { w:'60%', c:'#ffd040', t:'Regular'      },
+    { w:'80%', c:'#7eff8a', t:'Buena'        },
+    { w:'100%',c:'#7c8cff', t:'Muy fuerte'   },
   ];
-  const lv = levels[Math.max(0, score - 1)];
-  bar.style.setProperty('--sw', lv.w);
-  bar.style.setProperty('--sc', lv.c);
-  txt.textContent = lv.t;
-  txt.style.color = lv.c;
+  const lv = levels[Math.max(0, s - 1)];
+  if (fill) { fill.style.width = lv.w; fill.style.background = lv.c; }
+  if (txt)  { txt.textContent = lv.t; txt.style.color = lv.c; }
+  _matchHint();   // también actualizar la coincidencia si ya hay algo escrito
 }
 
-// ── Handlers ──────────────────────────────────────────────────
-async function _handleLogin() {
-  const email = document.getElementById('li-email')?.value.trim();
-  const pass  = document.getElementById('li-pass')?.value;
-  if (!email || !pass) return _showError('Completa todos los campos.');
-  _setPhase('loading', 'Iniciando sesión…');
-  const res = await Auth.loginWithEmail(email, pass);
-  if (res.ok) {
-    if (res.needsVerification) {
-      _pendingEmail = email;
-      _setPhase('verify');
-      return;
+function _matchHint() {
+  const p1   = _id('reg-pass')?.value  || '';
+  const p2   = _id('reg-pass2')?.value || '';
+  const hint = _id('reg-match');
+  if (!hint || !p2) { if (hint) hint.style.display = 'none'; return; }
+  if (p1 === p2) {
+    hint.textContent = '✓ Las contraseñas coinciden';
+    hint.style.color = '#7eff8a';
+  } else {
+    hint.textContent = '✗ Las contraseñas no coinciden';
+    hint.style.color = '#ff6b6b';
+  }
+  hint.style.display = '';
+}
+
+// ── Error inline por sección ──────────────────────────────────
+function _setErr(section, msg) {
+  const el = _id(section + '-error');
+  if (!el) return;
+  if (msg) { el.textContent = msg; el.style.display = ''; }
+  else     { el.textContent = '';  el.style.display = 'none'; }
+}
+function _clearErr(section) { _setErr(section, ''); }
+
+// ── Estado de carga en botón ──────────────────────────────────
+function _setBusy(prefix, busy, label = null) {
+  const btn  = _id(prefix + '-submit');
+  const txt  = _id(prefix + '-submit-txt');
+  const spin = _id(prefix + '-submit-spin');
+  if (btn)  btn.disabled = busy;
+  if (txt)  { if (label) txt.textContent = label; }
+  if (spin) spin.style.display = busy ? '' : 'none';
+}
+
+// ── Cambiar fase ──────────────────────────────────────────────
+const _PHASES = ['pre','login','register','forgot','check-email','loading'];
+function _go(phase, msg = '') {
+  _phase = phase;
+  _PHASES.forEach(p => {
+    const el = _id('ls-' + p);
+    if (el) el.style.display = p === phase ? '' : 'none';
+  });
+  if (phase === 'loading') {
+    const lm = _id('ls-loading-msg');
+    if (lm) lm.textContent = msg || 'Cargando…';
+  }
+}
+
+// ── Configurar fase "check-email" ─────────────────────────────
+function _showCheckEmail(mode, email) {
+  _pendingMode  = mode;
+  _pendingEmail = email;
+
+  const title   = _id('ce-title');
+  const body    = _id('ce-body');
+  const ceEmail = _id('ce-email');
+  const va      = _id('ce-verify-actions');
+  const ra      = _id('ce-reset-actions');
+
+  if (ceEmail) ceEmail.textContent = email;
+
+  if (mode === 'verify') {
+    if (title) title.textContent = 'Verifica tu correo';
+    if (body)  body.innerHTML = `Te enviamos un correo de verificación a <strong id="ce-email" class="ls-email-hl">${email}</strong>. Ábrelo y haz clic en el enlace para activar tu cuenta.`;
+    if (va) va.style.display = '';
+    if (ra) ra.style.display = 'none';
+    _startResendCooldown(60);
+  } else {
+    if (title) title.textContent = 'Revisa tu correo';
+    if (body)  body.innerHTML = `Te enviamos un enlace para restablecer tu contraseña a <strong id="ce-email" class="ls-email-hl">${email}</strong>. El enlace es válido durante 1 hora.`;
+    if (va) va.style.display = 'none';
+    if (ra) ra.style.display = '';
+  }
+
+  _go('check-email');
+}
+
+// ── Cooldown para no spamear verificación ─────────────────────
+function _startResendCooldown(secs) {
+  _resendSecs = secs;
+  const btn = _id('ce-resend');
+  const cd  = _id('ce-resend-cd');
+  if (btn) btn.style.display = 'none';
+  if (cd)  { cd.style.display = ''; cd.textContent = `Reenviar en ${secs}s`; }
+  clearInterval(_resendTimer);
+  _resendTimer = setInterval(() => {
+    _resendSecs--;
+    if (_resendSecs <= 0) {
+      clearInterval(_resendTimer);
+      if (btn) btn.style.display = '';
+      if (cd)  cd.style.display  = 'none';
+    } else {
+      if (cd) cd.textContent = `Reenviar en ${_resendSecs}s`;
     }
-    _setPhase('loading', '¡Bienvenido! Cargando tu espacio…');
-    return;
-  }
-  _showError(_friendlyError(res.error));
+  }, 1000);
 }
 
-async function _handleRegister() {
-  const email = document.getElementById('reg-email')?.value.trim();
-  const pass  = document.getElementById('reg-pass')?.value;
-  const pass2 = document.getElementById('reg-pass2')?.value;
-  if (!email || !pass || !pass2) return _showError('Completa todos los campos.');
-  if (pass !== pass2) return _showError('Las contraseñas no coinciden.');
-  if (pass.length < 6) return _showError('La contraseña debe tener al menos 6 caracteres.');
-  _setPhase('loading', 'Creando tu cuenta…');
-  const res = await Auth.registerWithEmail(email, pass);
-  if (res.ok) {
-    _pendingEmail = email;
-    _setPhase('verify');
-    return;
-  }
-  // Si el email ya existe como cuenta Google, mostrar mensaje especial
-  if (res.hasGoogle) {
-    _showError('⚠️ Este email ya tiene una cuenta de Google. Usa el botón "Continuar con Google" para entrar.');
-    _setPhase('login'); // redirigir al panel de login para que use Google
-    return;
-  }
-  _showError(_friendlyError(res.error));
-}
-
-async function _handleForgot() {
-  const email = document.getElementById('forgot-email')?.value.trim();
-  if (!email) return _showError('Ingresa tu email.');
-  _setPhase('loading', 'Enviando enlace…');
-  const res = await Auth.sendPasswordReset(email);
-  if (res.ok) {
-    _pendingEmail = email;
-    _setPhase('verify');
-    const addr = document.getElementById('verify-email-addr');
-    if (addr) addr.textContent = email;
-    const p = document.querySelector('#login-verify p:nth-child(3)');
-    if (p) p.innerHTML = `Te enviamos un enlace para restablecer tu contraseña a <strong style="color:var(--ac)">${email}</strong>.`;
-    return;
-  }
-  _showError(_friendlyError(res.error));
-}
-
-async function _handleVerifyDone() {
-  _setPhase('loading', 'Verificando…');
-  const res = await Auth.reloadUser();
-  if (res.verified) {
-    _setPhase('loading', '¡Cuenta verificada! Cargando…');
-    return;
-  }
-  _setPhase('verify');
-  _showToast('Aún no hemos detectado la verificación. Revisa tu Gmail.');
-}
-
-async function _handleResend() {
-  const res = await Auth.resendVerification();
-  if (res.ok) _showToast('Correo reenviado. Revisa tu Gmail.');
-  else _showToast('Espera un momento antes de reenviar.');
-}
-
-async function _handleGoogle() {
-  _setPhase('loading', 'Abriendo Google…');
-  const res = await Auth.loginWithGoogle();
-  if (res.ok) {
-    _setPhase('loading', '¡Bienvenido! Cargando tu espacio…');
-    return;
-  }
-  if (res.cancelled) { _setPhase('pre'); return; }
-  _showError(_friendlyError(res.error));
-}
-
-// ── Helpers ───────────────────────────────────────────────────
-function _friendlyError(code = '') {
-  const map = {
-    'auth/user-not-found':       'No existe una cuenta con ese email.',
-    'auth/wrong-password':       'Contraseña incorrecta.',
-    'auth/invalid-credential':   'Email o contraseña incorrectos.',
-    'auth/email-already-in-use': 'Ya existe una cuenta con ese email.',
-    'auth/email-already-in-use:google': '⚠️ Este email ya tiene cuenta Google. Inicia sesión con Google arriba.',
-    'auth/weak-password':        'La contraseña es muy débil (mín. 6 caracteres).',
-    'auth/invalid-email':        'El email no es válido.',
-    'auth/too-many-requests':    'Demasiados intentos. Espera unos minutos.',
-    'auth/network-request-failed': 'Sin conexión. Revisa tu internet.',
-  };
-  for (const [k, v] of Object.entries(map)) {
-    if (code.includes(k)) return v;
-  }
-  return code || 'Error desconocido. Inténtalo de nuevo.';
-}
-
-function _showError(msg) {
-  _setPhase('error', msg);
-}
-
-function _showToast(msg) {
+// ── Toast ─────────────────────────────────────────────────────
+function _toast(msg, color = 'var(--ac)') {
   if (window.Toast?.show) { window.Toast.show(msg); return; }
   const t = document.createElement('div');
   t.textContent = msg;
-  t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:rgba(30,30,50,.95);color:#fff;padding:10px 18px;border-radius:10px;font-size:.82rem;z-index:99999;pointer-events:none;';
+  t.style.cssText = `
+    position:fixed;bottom:28px;left:50%;transform:translateX(-50%);
+    background:rgba(20,20,38,.97);color:#fff;
+    padding:10px 18px;border-radius:10px;font-size:.82rem;
+    z-index:99999;pointer-events:none;
+    border:1px solid ${color};box-shadow:0 4px 20px rgba(0,0,0,.4);
+    max-width:calc(100vw - 40px);text-align:center;
+  `;
   document.body.appendChild(t);
-  setTimeout(() => t.remove(), 3000);
+  setTimeout(() => t.remove(), 3500);
 }
 
-// ── Fases ─────────────────────────────────────────────────────
-const _phases = ['pre','email','register','verify','forgot','loading','error'];
+// ══════════════════════════════════════════════════════════════
+// HANDLERS
+// ══════════════════════════════════════════════════════════════
 
-function _setPhase(phase, msg = '') {
-  _currentPhase = phase;
-  _phases.forEach(p => {
-    const el = document.getElementById('login-' + p) ||
-               document.getElementById('login-' + p.replace('email','email'));
-    // mapeo especial
-    const ids = {
-      pre:      'login-pre',
-      email:    'login-email',
-      register: 'login-register',
-      verify:   'login-verify',
-      forgot:   'login-forgot',
-      loading:  'login-loading',
-      error:    'login-error',
-    };
-    const elem = document.getElementById(ids[p]);
-    if (elem) elem.style.display = p === phase ? '' : 'none';
-  });
+async function _doLogin() {
+  _clearErr('li');
+  const email = _id('li-email')?.value.trim();
+  const pass  = _id('li-pass')?.value;
 
-  if (phase === 'loading') {
-    const lmsg = document.getElementById('login-loading-msg');
-    if (lmsg) lmsg.textContent = msg || 'Cargando…';
+  if (!email) { _setErr('li', 'Ingresa tu correo electrónico.'); _id('li-email')?.focus(); return; }
+  if (!pass)  { _setErr('li', 'Ingresa tu contraseña.');          _id('li-pass')?.focus();  return; }
+
+  _setBusy('li', true, 'Iniciando sesión…');
+
+  const res = await Auth.login(email, pass);
+
+  _setBusy('li', false, 'Entrar');
+
+  if (res.ok) {
+    if (res.needsVerification) {
+      _showCheckEmail('verify', email);
+      return;
+    }
+    _go('loading', '¡Bienvenido! Cargando tu espacio…');
+    return;
   }
-  if (phase === 'error') {
-    const emsg = document.getElementById('login-error-msg');
-    if (emsg) emsg.textContent = msg || 'Error desconocido.';
+
+  _setErr('li', res.message);
+  // Resaltar campo con error
+  if (res.code?.includes('email')) _id('li-email')?.classList.add('ls-error-border');
+  if (res.code?.includes('password') || res.code?.includes('credential'))
+    _id('li-pass')?.classList.add('ls-error-border');
+
+  setTimeout(() => {
+    _id('li-email')?.classList.remove('ls-error-border');
+    _id('li-pass')?.classList.remove('ls-error-border');
+  }, 2500);
+}
+
+async function _doRegister() {
+  _clearErr('reg');
+  const name  = _id('reg-name')?.value.trim()  || '';
+  const email = _id('reg-email')?.value.trim()  || '';
+  const pass  = _id('reg-pass')?.value          || '';
+  const pass2 = _id('reg-pass2')?.value         || '';
+
+  if (!email)         { _setErr('reg', 'Ingresa tu correo electrónico.'); return; }
+  if (!pass)          { _setErr('reg', 'Ingresa una contraseña.');         return; }
+  if (pass.length < 6){ _setErr('reg', 'La contraseña debe tener al menos 6 caracteres.'); return; }
+  if (pass !== pass2) { _setErr('reg', 'Las contraseñas no coinciden. Verifica el segundo campo.'); return; }
+
+  _setBusy('reg', true, 'Creando cuenta…');
+
+  const res = await Auth.register(email, pass, name);
+
+  _setBusy('reg', false, 'Crear cuenta');
+
+  if (res.ok) {
+    _showCheckEmail('verify', email);
+    return;
   }
-  if (phase === 'verify') {
-    const addr = document.getElementById('verify-email-addr');
-    if (addr) addr.textContent = _pendingEmail;
+
+  _setErr('reg', res.message);
+}
+
+async function _doForgot() {
+  _clearErr('fgt');
+  const email = _id('fgt-email')?.value.trim() || '';
+
+  if (!email) { _setErr('fgt', 'Ingresa tu correo electrónico.'); return; }
+
+  _setBusy('fgt', true, 'Enviando…');
+
+  const res = await Auth.sendPasswordReset(email);
+
+  _setBusy('fgt', false, 'Enviar enlace');
+
+  // Siempre mostrar "check email" aunque el email no exista
+  // (por seguridad: no revelar si un correo está registrado)
+  _showCheckEmail('reset', email);
+}
+
+async function _doCheckVerified() {
+  const btn = _id('ce-done');
+  if (btn) btn.disabled = true;
+
+  const res = await Auth.reloadUser();
+
+  if (btn) btn.disabled = false;
+
+  if (res.verified) {
+    _go('loading', '¡Cuenta verificada! Cargando tu espacio…');
+    return;
+  }
+  _toast('Aún no detectamos la verificación. Revisa tu correo y haz clic en el enlace.', '#ffd040');
+}
+
+async function _doResend() {
+  const res = await Auth.resendVerification();
+  if (res.ok && !res.alreadyVerified) {
+    _toast('Correo reenviado. Revisa tu bandeja de entrada (y el spam).', 'var(--ac)');
+    _startResendCooldown(60);
+  } else if (res.alreadyVerified) {
+    _toast('Tu correo ya está verificado. Recarga la página.', '#7eff8a');
+  } else {
+    _toast(res.message || 'No se pudo reenviar. Espera un momento.', '#ff6b6b');
+  }
+}
+
+async function _doResendReset() {
+  const res = await Auth.sendPasswordReset(_pendingEmail);
+  if (res.ok) {
+    _toast('Enlace reenviado. Revisa tu correo (y el spam).', 'var(--ac)');
+  } else {
+    _toast(res.message || 'No se pudo reenviar.', '#ff6b6b');
   }
 }
 
@@ -528,18 +705,18 @@ function _setPhase(phase, msg = '') {
 const LoginScreen = {
   show() {
     _mount();
-    const el = document.getElementById('login-screen');
-    if (el) { el.style.display = 'flex'; _setPhase('pre'); }
+    const el = _id('ls-root');
+    if (el) { el.style.display = 'flex'; _go('pre'); }
   },
   hide() {
-    const el = document.getElementById('login-screen');
+    const el = _id('ls-root');
     if (!el) return;
-    el.style.opacity = '0';
-    el.style.transform = 'scale(1.02)';
     el.style.transition = 'opacity .3s ease, transform .3s ease';
+    el.style.opacity    = '0';
+    el.style.transform  = 'scale(1.02)';
     setTimeout(() => {
-      el.style.display = 'none';
-      el.style.opacity = '';
+      el.style.display   = 'none';
+      el.style.opacity   = '';
       el.style.transform = '';
     }, 300);
   }

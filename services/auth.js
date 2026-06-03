@@ -1,261 +1,286 @@
 /* ═══════════════════════════════════════════════════════════════
-   AUTH SERVICE — CÓDICE
-   Email/contraseña + verificación + Google (web only).
-   
-   API pública (en window.Auth):
-     Auth.loginWithEmail(email, pass)   → Promise
-     Auth.registerWithEmail(email, pass)→ Promise
-     Auth.loginWithGoogle()             → Promise (web only)
-     Auth.sendPasswordReset(email)      → Promise
-     Auth.resendVerification()          → Promise
-     Auth.reloadUser()                  → Promise<{verified}>
-     Auth.logout()                      → Promise
-     Auth.currentUser()                 → {uid, email, displayName, photoURL} | null
-     Auth.onUserChange(fn)              → unsub function
-     Auth.waitForUser()                 → Promise<user|null>
+   AUTH SERVICE — CÓDICE  (v4 — Email/Password only)
+
+   API pública  →  window.Auth
+   ─────────────────────────────────────────────────────────────
+   Auth.register(email, pass, displayName?)  → Promise<Result>
+   Auth.login(email, pass)                   → Promise<Result>
+   Auth.sendPasswordReset(email)             → Promise<Result>
+   Auth.resendVerification()                 → Promise<Result>
+   Auth.reloadUser()                         → Promise<{verified}>
+   Auth.logout()                             → Promise<Result>
+   Auth.currentUser()                        → UserInfo | null
+   Auth.onUserChange(fn)                     → unsub()
+   Auth.waitForUser()                        → Promise<UserInfo|null>
+   Auth.isEmailRegistered(email)             → Promise<boolean>
+   ─────────────────────────────────────────────────────────────
+   Result  =  { ok: true, ...extras }
+            | { ok: false, code: string, message: string }
 ═══════════════════════════════════════════════════════════════ */
 
 import {
   _auth, _db,
-  GoogleAuthProvider, signInWithPopup, signInWithRedirect,
-  getRedirectResult, signOut, onAuthStateChanged,
-  createUserWithEmailAndPassword, signInWithEmailAndPassword,
-  sendEmailVerification, sendPasswordResetEmail, reload,
-  fetchSignInMethodsForEmail, EmailAuthProvider, linkWithCredential,
-  doc, setDoc, getDoc, serverTimestamp
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  reload,
+  signOut,
+  onAuthStateChanged,
+  updateProfile,
+  doc, setDoc, serverTimestamp
 } from "./firebase.js";
 
-// ── Estado interno ─────────────────────────────────────────────
-let _currentUser  = null;
-let _authReady    = false;
-let _authReadyCb  = [];
-const _listeners  = new Set();
+// ── Estado interno ────────────────────────────────────────────
+let _current    = null;   // UserInfo o null
+let _ready      = false;  // true cuando auth ya resolvió el estado inicial
+let _readyCbs   = [];     // callbacks pendientes de waitForUser()
+const _listeners = new Set();
 
-// ── Provider Google ───────────────────────────────────────────
-const _provider = new GoogleAuthProvider();
-_provider.addScope("profile");
-_provider.addScope("email");
-_provider.setCustomParameters({ prompt: 'select_account' });
-
-// ── getRedirectResult ─────────────────────────────────────────
-let _redirectResultUser = null;
-const _redirectPromise = getRedirectResult(_auth).then(result => {
-  if (result?.user) {
-    _redirectResultUser = _mapUser(result.user);
-    _currentUser = _redirectResultUser;
-    _listeners.forEach(fn => { try { fn(_currentUser); } catch {} });
-  }
-}).catch(e => {
-  if (e.code !== 'auth/no-auth-event' && e.code !== 'auth/internal-error') {
-    console.warn('[Auth] getRedirectResult:', e.code);
-  }
-});
-
-// ── onAuthStateChanged ────────────────────────────────────────
-onAuthStateChanged(_auth, async (fbUser) => {
-  _currentUser = fbUser ? _mapUser(fbUser) : null;
-
-  if (fbUser) {
-    try {
-      await setDoc(
-        doc(_db, "users", fbUser.uid, "profile", "info"),
-        {
-          email:       fbUser.email,
-          displayName: fbUser.displayName || fbUser.email.split('@')[0],
-          photoURL:    fbUser.photoURL || null,
-          lastLogin:   serverTimestamp(),
-          provider:    fbUser.providerData?.[0]?.providerId || 'email'
-        },
-        { merge: true }
-      );
-    } catch (e) {
-      console.warn("[Auth] Firestore upsert:", e);
-    }
-  }
-
-  _listeners.forEach(fn => { try { fn(_currentUser); } catch {} });
-
-  if (!_authReady) {
-    if (fbUser) {
-      // Solo dejar entrar si el email está verificado o es Google
-      const isGoogle = fbUser.providerData?.[0]?.providerId === 'google.com';
-      if (fbUser.emailVerified || isGoogle) {
-        _authReady = true;
-        _authReadyCb.forEach(r => r(_currentUser));
-        _authReadyCb = [];
-      }
-      // Si no está verificado: no resolvemos, el LoginScreen maneja el flujo
-    } else {
-      _redirectPromise.finally(() => {
-        if (!_authReady) {
-          if (_redirectResultUser) _currentUser = _redirectResultUser;
-          _authReady = true;
-          _authReadyCb.forEach(r => r(_currentUser));
-          _authReadyCb = [];
-        }
-      });
-    }
-  }
-});
-
-// ── Helpers ───────────────────────────────────────────────────
-function _mapUser(fbUser) {
+// ── Mapeo Firebase user → UserInfo ────────────────────────────
+function _map(fbUser) {
+  if (!fbUser) return null;
   return {
-    uid:          fbUser.uid,
-    email:        fbUser.email,
-    displayName:  fbUser.displayName || fbUser.email?.split('@')[0] || 'Usuario',
-    photoURL:     fbUser.photoURL || null,
+    uid:           fbUser.uid,
+    email:         fbUser.email,
+    displayName:   fbUser.displayName || fbUser.email.split('@')[0],
+    photoURL:      fbUser.photoURL    || null,
     emailVerified: fbUser.emailVerified
   };
 }
 
-// ── API pública ───────────────────────────────────────────────
+// ── Persistir perfil en Firestore ────────────────────────────
+async function _upsertProfile(fbUser) {
+  try {
+    await setDoc(
+      doc(_db, "users", fbUser.uid, "profile", "info"),
+      {
+        email:       fbUser.email,
+        displayName: fbUser.displayName || fbUser.email.split('@')[0],
+        photoURL:    fbUser.photoURL   || null,
+        lastLogin:   serverTimestamp(),
+        provider:    "email"
+      },
+      { merge: true }
+    );
+  } catch (e) {
+    console.warn("[Auth] Firestore upsert:", e.code || e.message);
+  }
+}
+
+// ── Notificar a listeners ─────────────────────────────────────
+function _notify(user) {
+  _listeners.forEach(fn => { try { fn(user); } catch {} });
+}
+
+// ── onAuthStateChanged ────────────────────────────────────────
+onAuthStateChanged(_auth, async fbUser => {
+  if (fbUser) {
+    // Recargar para tener el estado de verificación más reciente
+    try { await reload(fbUser); } catch {}
+
+    _current = _map(_auth.currentUser || fbUser);
+
+    if (_auth.currentUser?.emailVerified) {
+      await _upsertProfile(_auth.currentUser);
+    }
+  } else {
+    _current = null;
+  }
+
+  _notify(_current);
+
+  if (!_ready) {
+    _ready = true;
+    _readyCbs.forEach(r => r(_current));
+    _readyCbs = [];
+  }
+});
+
+// ── Error → mensaje amigable ──────────────────────────────────
+const _ERR = {
+  "auth/user-not-found":          "No existe una cuenta con ese correo.",
+  "auth/wrong-password":          "Contraseña incorrecta. Verifica e intenta de nuevo.",
+  "auth/invalid-credential":      "Correo o contraseña incorrectos.",
+  "auth/email-already-in-use":    "Ya existe una cuenta con ese correo.",
+  "auth/weak-password":           "La contraseña es muy débil (mínimo 6 caracteres).",
+  "auth/invalid-email":           "El formato del correo no es válido.",
+  "auth/too-many-requests":       "Demasiados intentos fallidos. Espera unos minutos o restablece tu contraseña.",
+  "auth/network-request-failed":  "Sin conexión a internet. Revisa tu red e intenta de nuevo.",
+  "auth/user-disabled":           "Esta cuenta fue deshabilitada. Contacta soporte.",
+  "auth/operation-not-allowed":   "El método de acceso no está habilitado. Contacta soporte.",
+  "auth/requires-recent-login":   "Por seguridad, vuelve a iniciar sesión antes de hacer este cambio.",
+  "auth/missing-email":           "Debes ingresar un correo electrónico.",
+  "auth/missing-password":        "Debes ingresar una contraseña.",
+  "auth/internal-error":          "Error interno de Firebase. Intenta de nuevo.",
+};
+
+function _err(e) {
+  const code = e?.code || "unknown";
+  const message = _ERR[code]
+    || (e?.message?.includes("CONFIGURATION_NOT_FOUND")
+        ? "Configuración de Firebase incorrecta. Revisa la consola."
+        : e?.message || "Error desconocido. Intenta de nuevo.");
+  console.error("[Auth]", code, e?.message);
+  return { ok: false, code, message };
+}
+
+// ══════════════════════════════════════════════════════════════
+// API PÚBLICA
+// ══════════════════════════════════════════════════════════════
 const Auth = {
 
-  /** Registro con email/contraseña — envía verificación automáticamente.
-   *  Si el email ya existe como cuenta Google, ofrece vincular las credenciales. */
-  async registerWithEmail(email, password) {
+  // ── Registro ───────────────────────────────────────────────
+  async register(email, password, displayName = "") {
     try {
       const cred = await createUserWithEmailAndPassword(_auth, email, password);
-      await sendEmailVerification(cred.user);
-      return { ok: true, needsVerification: true };
-    } catch (e) {
-      // Si el email ya está registrado (posiblemente con Google)
-      if (e.code === 'auth/email-already-in-use') {
+
+      // Guardar nombre si se provee
+      if (displayName.trim()) {
         try {
-          const methods = await fetchSignInMethodsForEmail(_auth, email);
-          if (methods.includes('google.com')) {
-            return { ok: false, error: e.code, hasGoogle: true,
-                     hint: 'Este email ya tiene cuenta de Google. Inicia sesión con Google y luego vincula tu contraseña desde ajustes.' };
-          }
-        } catch (_) {}
-        return { ok: false, error: e.code };
+          await updateProfile(cred.user, { displayName: displayName.trim() });
+        } catch {}
       }
-      console.error("[Auth] registerWithEmail:", e);
-      return { ok: false, error: e.code || e.message };
-    }
-  },
 
-  /** Vincula email/contraseña a la cuenta Google activa.
-   *  Llámalo DESPUÉS de loginWithGoogle() cuando el usuario quiere también
-   *  poder entrar con email+contraseña. */
-  async linkEmailToCurrentGoogle(email, password) {
-    try {
-      const user = _auth.currentUser;
-      if (!user) return { ok: false, error: 'No hay sesión activa de Google' };
-      const credential = EmailAuthProvider.credential(email, password);
-      const result = await linkWithCredential(user, credential);
-      await sendEmailVerification(result.user);
-      return { ok: true, needsVerification: true };
+      // Enviar verificación — configurado para que el link funcione
+      // con la URL de producción del proyecto
+      const actionCodeSettings = {
+        // Cambia esto a tu dominio real si usas dominio personalizado
+        url: window.location.origin + "/?emailVerified=1",
+        handleCodeInApp: false
+      };
+
+      try {
+        await sendEmailVerification(cred.user, actionCodeSettings);
+      } catch (evErr) {
+        // Si falla con actionCodeSettings, reintenta sin ellos
+        console.warn("[Auth] sendEmailVerification con settings falló, reintentando:", evErr.code);
+        try { await sendEmailVerification(cred.user); } catch {}
+      }
+
+      return { ok: true, needsVerification: true, email: cred.user.email };
     } catch (e) {
-      console.error("[Auth] linkEmailToCurrentGoogle:", e);
-      return { ok: false, error: e.code || e.message };
+      return _err(e);
     }
   },
 
-  /** Elimina TODOS los usuarios de Firebase Auth — solo para desarrollo.
-   *  En producción, usar la consola de Firebase. */
-  async deleteAllAccounts() {
-    // Esta operación debe hacerse desde Firebase Console > Authentication > Users
-    // No es posible borrar otros usuarios desde el cliente por seguridad.
-    return { ok: false, error: 'Usa Firebase Console para eliminar cuentas masivamente.' };
-  },
-
-  /** Login con email/contraseña */
-  async loginWithEmail(email, password) {
+  // ── Login ──────────────────────────────────────────────────
+  async login(email, password) {
     try {
       const cred = await signInWithEmailAndPassword(_auth, email, password);
-      if (!cred.user.emailVerified) {
-        return { ok: true, needsVerification: true };
+
+      // Recargar para tener el estado de verificación más reciente
+      try { await reload(cred.user); } catch {}
+      const freshUser = _auth.currentUser;
+
+      if (!freshUser.emailVerified) {
+        // Intentar reenviar verificación automáticamente en cada login
+        try { await sendEmailVerification(freshUser); } catch {}
+        return { ok: true, needsVerification: true, email: freshUser.email };
       }
-      return { ok: true, user: _mapUser(cred.user) };
+
+      _current = _map(freshUser);
+      await _upsertProfile(freshUser);
+      _notify(_current);
+
+      return { ok: true, user: _current };
     } catch (e) {
-      console.error("[Auth] loginWithEmail:", e);
-      return { ok: false, error: e.code || e.message };
+      return _err(e);
     }
   },
 
-  /** Login con Google (solo web — en APK no funciona por política de Google) */
-  async loginWithGoogle() {
-    try {
-      const result = await signInWithPopup(_auth, _provider);
-      return { ok: true, user: _mapUser(result.user) };
-    } catch (e) {
-      if (e.code === "auth/popup-closed-by-user" ||
-          e.code === "auth/cancelled-popup-request") {
-        return { ok: false, cancelled: true };
-      }
-      console.error("[Auth] loginWithGoogle:", e);
-      return { ok: false, error: e.code || e.message };
-    }
-  },
-
-  /** Enviar correo de restablecimiento de contraseña */
+  // ── Recuperar contraseña ────────────────────────────────────
+  // Firebase envía el correo desde la consola; asegúrate de tener
+  // la plantilla configurada en Authentication → Templates.
   async sendPasswordReset(email) {
+    if (!email || !email.includes("@")) {
+      return { ok: false, code: "auth/invalid-email", message: "Ingresa un correo válido." };
+    }
     try {
-      await sendPasswordResetEmail(_auth, email);
-      return { ok: true };
+      const actionCodeSettings = {
+        url: window.location.origin + "/?passwordReset=1",
+        handleCodeInApp: false
+      };
+      try {
+        await sendPasswordResetEmail(_auth, email, actionCodeSettings);
+      } catch (e1) {
+        if (e1.code === "auth/unauthorized-continue-uri" ||
+            e1.code === "auth/invalid-continue-uri") {
+          // Fallback: sin actionCodeSettings
+          await sendPasswordResetEmail(_auth, email);
+        } else {
+          throw e1;
+        }
+      }
+      return { ok: true, email };
     } catch (e) {
-      console.error("[Auth] sendPasswordReset:", e);
-      return { ok: false, error: e.code || e.message };
+      // Firebase NO revela si el email existe por seguridad → tratar
+      // 'user-not-found' como éxito aparente (previene user enumeration)
+      if (e.code === "auth/user-not-found") {
+        return { ok: true, email };
+      }
+      return _err(e);
     }
   },
 
-  /** Reenviar verificación de email */
+  // ── Reenviar verificación ──────────────────────────────────
   async resendVerification() {
+    const user = _auth.currentUser;
+    if (!user) return { ok: false, code: "no-session", message: "No hay sesión activa." };
+    if (user.emailVerified) return { ok: true, alreadyVerified: true };
     try {
-      const user = _auth.currentUser;
-      if (!user) return { ok: false, error: 'No hay sesión activa' };
       await sendEmailVerification(user);
       return { ok: true };
     } catch (e) {
-      console.error("[Auth] resendVerification:", e);
-      return { ok: false, error: e.code || e.message };
+      return _err(e);
     }
   },
 
-  /** Recargar usuario y verificar si ya confirmó el email */
+  // ── Verificar si ya abrió el link de verificación ─────────
   async reloadUser() {
+    const user = _auth.currentUser;
+    if (!user) return { verified: false };
     try {
-      const user = _auth.currentUser;
-      if (!user) return { verified: false };
       await reload(user);
-      if (user.emailVerified) {
-        _currentUser = _mapUser(user);
-        _authReady = true;
-        _listeners.forEach(fn => { try { fn(_currentUser); } catch {} });
-        _authReadyCb.forEach(r => r(_currentUser));
-        _authReadyCb = [];
+      const fresh = _auth.currentUser;
+      if (fresh?.emailVerified) {
+        _current = _map(fresh);
+        await _upsertProfile(fresh);
+        _notify(_current);
+        if (!_ready) { _ready = true; _readyCbs.forEach(r => r(_current)); _readyCbs = []; }
+        return { verified: true, user: _current };
       }
-      return { verified: user.emailVerified };
+      return { verified: false };
     } catch (e) {
       return { verified: false };
     }
   },
 
-  /** Cerrar sesión */
+  // ── Logout ─────────────────────────────────────────────────
   async logout() {
     try {
-      _authReady = false;
+      _ready = false;
+      _current = null;
       await signOut(_auth);
+      _notify(null);
       return { ok: true };
     } catch (e) {
-      console.error("[Auth] logout:", e);
-      return { ok: false, error: e.message };
+      return _err(e);
     }
   },
 
-  currentUser() { return _currentUser; },
+  // ── Getters / observadores ─────────────────────────────────
+  currentUser() { return _current; },
 
   onUserChange(fn) {
     _listeners.add(fn);
-    if (_authReady) { try { fn(_currentUser); } catch {} }
+    if (_ready) { try { fn(_current); } catch {} }
     return () => _listeners.delete(fn);
   },
 
   waitForUser() {
-    if (_authReady) return Promise.resolve(_currentUser);
-    return new Promise(resolve => _authReadyCb.push(resolve));
+    if (_ready) return Promise.resolve(_current);
+    return new Promise(resolve => _readyCbs.push(resolve));
   }
 };
 

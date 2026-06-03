@@ -15,7 +15,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # ── 2. Node 22 + Java 17 (LTS más estable para Capacitor 6) ─────────────
+      # ── 2. Node 22 + Java 17 ─────────────────────────────────────────────────
       - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
@@ -28,11 +28,11 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # ── 3. Android SDK (cmdline-tools) ───────────────────────────────────────
+      # ── 3. Android SDK ───────────────────────────────────────────────────────
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # ── 4. Instalar Capacitor + plugins (versiones exactas y comprobadas) ────
+      # ── 4. Instalar Capacitor + plugins ──────────────────────────────────────
       - name: Instalar Capacitor y plugins
         run: |
           npm install --save-exact \
@@ -43,23 +43,17 @@ jobs:
             @capacitor/status-bar@6.0.1 \
             @capacitor/keyboard@6.0.2 \
             @capacitor-community/google-auth@3.4.0
-          # @capacitor-community/google-auth implementa Google Sign-In nativo:
-          # usa la hoja de cuentas del sistema (igual que Gmail, ChatGPT, etc.)
-          # en vez del WebView popup que a veces pide 2FA innecesariamente
 
       # ── 5. Preparar carpeta www ───────────────────────────────────────────────
       - name: Preparar www
         run: |
           mkdir -p www
-          # Archivos raíz principales
           cp index.html manifest.json sw.js www/
-          # Carpetas de la app (si existen)
           for dir in icons js ai core features services ui utils; do
-            [ -d "$dir" ] && cp -r "$dir" www/ || echo "⚠ $dir no existe, saltando"
+            [ -d "$dir" ] && cp -r "$dir" www/ || echo "⚠ $dir no existe"
           done
-          # Archivos sueltos adicionales
           for f in firestore-social.js icon-192.png icon-512.png skills-lock.json; do
-            [ -f "$f" ] && cp "$f" www/ || echo "⚠ $f no existe, saltando"
+            [ -f "$f" ] && cp "$f" www/ || echo "⚠ $f no existe"
           done
           echo "✅ www listo — $(find www -type f | wc -l) archivos"
           ls -la www/
@@ -69,115 +63,97 @@ jobs:
         run: |
           rm -f capacitor.config.ts
           npx cap add android
-          # npx cap sync se llama en paso 6b para incluir GoogleAuth plugin
         env:
           CI: true
 
-      # ── 7. Permisos + tema nativo en AndroidManifest ─────────────────────────
+      # ── 6b. Sync con todos los plugins (incluye GoogleAuth) ──────────────────
+      - name: Sync plugins
+        run: |
+          npx cap sync android
+          if [ -d "node_modules/@capacitor-community/google-auth" ]; then
+            echo "✅ google-auth plugin presente"
+          else
+            echo "⚠️ google-auth plugin no encontrado"
+          fi
+
+      # ── 7. Permisos en AndroidManifest ───────────────────────────────────────
       - name: Configurar AndroidManifest
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
-          # Internet (siempre necesario para llamadas a Firebase/OpenRouter)
           grep -q 'INTERNET' "$MANIFEST" || \
             sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <application|' "$MANIFEST"
-          # Micrófono (para voz/speech recognition)
           grep -q 'RECORD_AUDIO' "$MANIFEST" || \
             sed -i 's|<application|<uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <application|' "$MANIFEST"
-          # Media (para subir imágenes y PDFs)
           grep -q 'READ_MEDIA_IMAGES' "$MANIFEST" || \
             sed -i 's|<application|<uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>\n    <application|' "$MANIFEST"
-          # Storage (Android ≤12 fallback)
           grep -q 'READ_EXTERNAL_STORAGE' "$MANIFEST" || \
             sed -i 's|<application|<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    <application|' "$MANIFEST"
-          # Ajuste de teclado para no cubrir inputs
           sed -i 's|android:theme="@style/AppTheme"|android:theme="@style/AppTheme" android:windowSoftInputMode="adjustResize"|' "$MANIFEST" || true
-          echo "✅ AndroidManifest configurado"
+          echo "✅ AndroidManifest permisos configurados"
           grep "uses-permission" "$MANIFEST"
 
-      # ── 6b. Inicializar plugin GoogleAuth nativo ─────────────────────────────
-      - name: Sync GoogleAuth plugin
-        run: |
-          # El plugin se sincroniza automáticamente con cap sync
-          # Solo verificamos que el plugin está presente
-          if [ -d "node_modules/@capacitor-community/google-auth" ]; then
-            echo "✅ @capacitor-community/google-auth instalado"
-          else
-            echo "⚠️ Plugin no encontrado — se instaló en el paso 4"
-          fi
-          npx cap sync android
-
-      # ── 7b. Habilitar Custom Tabs para Google Sign-In (sin esto popup no funciona) ────
-      - name: Habilitar Custom Tabs en AndroidManifest
+      # ── 7b. Custom Tabs para Google Sign-In ──────────────────────────────────
+      - name: Habilitar Custom Tabs
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
-          # Custom Tabs — necesario para que signInWithPopup abra ventana nativa
-          # Sin esto Google Sign-In abre el navegador del sistema (fuera de la app)
-          grep -q 'android.support.customtabs' "$MANIFEST" ||             sed -i 's|<application|<queries>
-      <intent>
-        <action android:name="android.support.customtabs.action.CustomTabsService"/>
-      </intent>
-    </queries>
-    <application|' "$MANIFEST"
-          echo "✅ Custom Tabs habilitado"
+          python3 -c "
+          import sys
+          path = sys.argv[1]
+          content = open(path).read()
+          if 'customtabs' not in content:
+              q = '<queries><intent><action android:name=\"android.support.customtabs.action.CustomTabsService\"/></intent></queries>\n  '
+              content = content.replace('<application', q + '<application', 1)
+              open(path,'w').write(content)
+              print('Custom Tabs agregado')
+          else:
+              print('Custom Tabs ya presente')
+          " "$MANIFEST"
 
-      # ── 8. Tema nativo AppTheme (dark, sin barra de título, borde a borde) ─────
+      # ── 8. Tema nativo AppTheme dark ─────────────────────────────────────────
       - name: Tema nativo AppTheme dark
         run: |
           STYLES="android/app/src/main/res/values/styles.xml"
           if [ -f "$STYLES" ]; then
-            # Sin ActionBar ni decoración de sistema visible
             sed -i 's/Theme\.AppCompat\.DayNight\.DarkActionBar/Theme.AppCompat.NoActionBar/g' "$STYLES"
-            # Fondo negro profundo, igual que la app — elimina flash blanco al arrancar
-            grep -q 'colorBackground' "$STYLES" ||               sed -i 's|</style>|    <item name="android:colorBackground">#08080E</item>
-    <item name="colorPrimary">#7C8CFF</item>
-    <item name="colorAccent">#7C8CFF</item>
-    <item name="android:windowBackground">@color/black</item>
-    <item name="android:windowTranslucentStatus">false</item>
-    <item name="android:windowDrawsSystemBarBackgrounds">true</item>
-    <item name="android:statusBarColor">#08080E</item>
-    <item name="android:navigationBarColor">#08080E</item>
-</style>|' "$STYLES"
-            echo "✅ styles.xml actualizado"
+            grep -q 'colorBackground' "$STYLES" || python3 -c "
+          content = open('$STYLES').read()
+          items = '''    <item name=\"android:colorBackground\">#08080E</item>
+          <item name=\"colorPrimary\">#7C8CFF</item>
+          <item name=\"colorAccent\">#7C8CFF</item>
+          <item name=\"android:windowBackground\">#08080E</item>
+          <item name=\"android:statusBarColor\">#08080E</item>
+          <item name=\"android:navigationBarColor\">#08080E</item>'''
+          content = content.replace('</style>', items + '\n</style>', 1)
+          open('$STYLES','w').write(content)
+          print('styles.xml actualizado')
+          "
+            echo "✅ styles.xml OK"
             cat "$STYLES"
           fi
-          # Crear colors.xml si no existe (necesario para @color/black)
           COLORS="android/app/src/main/res/values/colors.xml"
           if [ ! -f "$COLORS" ]; then
-            cat > "$COLORS" << 'XML'
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <color name="black">#08080E</color>
-    <color name="colorPrimary">#7C8CFF</color>
-    <color name="colorAccent">#7C8CFF</color>
-    <color name="colorBackground">#08080E</color>
-</resources>
-XML
-            echo "✅ colors.xml creado"
+            python3 -c "
+          xml = '''<?xml version=\"1.0\" encoding=\"utf-8\"?>
+          <resources>
+              <color name=\"black\">#08080E</color>
+              <color name=\"colorPrimary\">#7C8CFF</color>
+              <color name=\"colorAccent\">#7C8CFF</color>
+          </resources>'''
+          open('$COLORS','w').write(xml)
+          print('colors.xml creado')
+          "
           fi
 
-      # ── 9. Gradle: Kotlin + optimizaciones de build ───────────────────────────
+      # ── 9. Gradle configuración ───────────────────────────────────────────────
       - name: Configurar Gradle
         run: |
-          # Forzar versiones Kotlin compatibles con Java 17
           printf '\nconfigurations.all { resolutionStrategy { force "org.jetbrains.kotlin:kotlin-stdlib:1.9.22"; force "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.22"; force "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.22" } }' \
             >> android/app/build.gradle
-
-          # Habilitar multiDex (necesario para apps grandes)
           sed -i 's/multiDexEnabled false/multiDexEnabled true/' android/app/build.gradle || true
           grep -q 'multiDexEnabled true' android/app/build.gradle || \
             sed -i 's/defaultConfig {/defaultConfig {\n        multiDexEnabled true/' android/app/build.gradle
-
-          # Propiedades de Gradle optimizadas para CI
           mkdir -p android/.gradle
-          cat >> android/gradle.properties << 'PROPS'
-          org.gradle.jvmargs=-Xmx4g -Xms1g -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8
-          org.gradle.daemon=false
-          org.gradle.parallel=true
-          org.gradle.caching=true
-          android.useAndroidX=true
-          android.enableJetifier=true
-          PROPS
-
+          printf 'org.gradle.jvmargs=-Xmx4g -Xms1g -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8\norg.gradle.daemon=false\norg.gradle.parallel=true\norg.gradle.caching=true\nandroid.useAndroidX=true\nandroid.enableJetifier=true\n' >> android/gradle.properties
           echo "✅ Gradle configurado"
 
       # ── 10. Gradle cache ──────────────────────────────────────────────────────
@@ -192,7 +168,7 @@ XML
           restore-keys: |
             gradle-${{ runner.os }}-
 
-      # ── 11. Compilar APK debug firmado ────────────────────────────────────────
+      # ── 11. Build APK debug ───────────────────────────────────────────────────
       - name: Build APK debug
         run: |
           chmod +x android/gradlew
@@ -205,30 +181,28 @@ XML
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g"
           JAVA_TOOL_OPTIONS: "-Xmx4g"
 
-      # ── 12. Verificar APK generado ────────────────────────────────────────────
+      # ── 12. Verificar APK ─────────────────────────────────────────────────────
       - name: Verificar APK
         run: |
           APK_PATH=$(find android -name "*.apk" -type f | head -1)
           if [ -z "$APK_PATH" ]; then
-            echo "❌ ERROR: No se encontró ningún APK" && exit 1
+            echo "❌ No se encontró ningún APK" && exit 1
           fi
-          SIZE=$(du -sh "$APK_PATH" | cut -f1)
-          echo "✅ APK generado: $APK_PATH ($SIZE)"
+          echo "✅ APK: $APK_PATH ($(du -sh "$APK_PATH" | cut -f1))"
 
-      # ── 13. Renombrar APK con fecha + commit ──────────────────────────────────
+      # ── 13. Renombrar APK ─────────────────────────────────────────────────────
       - name: Renombrar APK
         run: |
           DATE=$(date +'%Y%m%d-%H%M')
           COMMIT=$(echo ${{ github.sha }} | head -c7)
           APK_PATH=$(find android -name "*.apk" -type f | head -1)
-          APK_DIR=$(dirname "$APK_PATH")
           NEW_NAME="Codice-${DATE}-${COMMIT}.apk"
-          mv "$APK_PATH" "$APK_DIR/$NEW_NAME"
+          mv "$APK_PATH" "$(dirname "$APK_PATH")/$NEW_NAME"
           echo "APK_NAME=Codice-${DATE}-${COMMIT}" >> $GITHUB_ENV
-          echo "APK_PATH=$APK_DIR/$NEW_NAME" >> $GITHUB_ENV
-          echo "✅ APK renombrado: $NEW_NAME"
+          echo "APK_PATH=$(dirname "$APK_PATH")/$NEW_NAME" >> $GITHUB_ENV
+          echo "✅ $NEW_NAME"
 
-      # ── 14. Subir artefacto (30 días de retención) ───────────────────────────
+      # ── 14. Upload APK ────────────────────────────────────────────────────────
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -237,15 +211,13 @@ XML
           retention-days: 30
           compression-level: 6
 
-      # ── 15. Resumen del build ─────────────────────────────────────────────────
+      # ── 15. Resumen ───────────────────────────────────────────────────────────
       - name: Build Summary
         if: always()
         run: |
           echo "## 📱 Build Códice" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **APK**: \`${{ env.APK_NAME }}.apk\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Rama**: \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Fecha**: $(date +'%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Descarga el APK desde la sección **Artifacts** de este workflow." >> $GITHUB_STEP_SUMMARY
+          echo "Descarga desde la sección **Artifacts** de este workflow." >> $GITHUB_STEP_SUMMARY

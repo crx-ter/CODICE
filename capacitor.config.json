@@ -52,14 +52,6 @@
       "resize": "body",
       "style": "DARK",
       "resizeOnFullScreen": true
-    },
-    "GoogleAuth": {
-      "scopes": [
-        "profile",
-        "email"
-      ],
-      "serverClientId": "332267079461-web.apps.googleusercontent.com",
-      "forceCodeForRefreshToken": true
     }
   }
 }

@@ -14752,39 +14752,49 @@ function init(){
   setTimeout(() => {
     /* Hide splash first */
     try { _hideSplash(); } catch(e) {}
-    /* Cubrir con login de inmediato si no hay usuario — evita flash de contenido */
-    try {
-      const _hasUserEarly = (window.__codiceUser != null)
-        || (window.FIREBASE_AUTH && window.FIREBASE_AUTH.currentUser != null);
-      if (!_hasUserEarly && typeof LoginScreen !== 'undefined') {
-        LoginScreen.show();
-      }
-    } catch(e) {}
+    /* ── LoginScreen gate con polling — espera a que el módulo ES cargue ──
+       En APK/Capacitor el módulo puede tardar 500ms-2s.
+       Hacemos polling cada 100ms hasta 5s antes de rendirnos.          ── */
+    (function _waitForLoginModule() {
+      let _attempts = 0;
+      const _maxAttempts = 50; // 5 segundos máx
 
-    /* LoginScreen: mostrar SOLO si no hay usuario resuelto.
-       Triple chequeo: boot machine + window user + Firebase auth directo.
-       300ms para darle tiempo a Firebase auth cache en cold-start mobile. */
-    setTimeout(() => {
-      try {
-        const _bm = window.__codiceBootMachine;
-        const hasUser = (_bm && _bm.user != null)
-          || (window.__codiceUser != null)
-          || (window.FIREBASE_AUTH && window.FIREBASE_AUTH.currentUser != null);
-        if (!hasUser) {
-          if(typeof LoginScreen !== 'undefined') { LoginScreen.show(); }
-        } else {
-          // Ocultar inmediatamente sin animación para evitar flash de contenido
-          const _lsEl = document.getElementById('login-screen');
-          if(_lsEl){ _lsEl.style.display='none'; _lsEl.style.opacity=''; }
-          if(typeof LoginScreen !== 'undefined') { LoginScreen.hide(); }
-          const u = (_bm && _bm.user) || window.__codiceUser
-                    || (window.FIREBASE_AUTH && window.FIREBASE_AUTH.currentUser);
-          if(typeof _updateUserUI === 'function' && u) {
-            try { _updateUserUI(u); } catch(e) {}
+      function _checkAndShow() {
+        _attempts++;
+
+        // Si el módulo todavía no cargó, seguir esperando
+        if (typeof LoginScreen === 'undefined' || typeof Auth === 'undefined') {
+          if (_attempts < _maxAttempts) {
+            setTimeout(_checkAndShow, 100);
+          } else {
+            console.error('[CÓDICE] LoginScreen module never loaded after 5s');
           }
+          return;
         }
-      } catch(e) { console.warn('[CÓDICE] LoginScreen gate', e); }
-    }, 300);
+
+        // Módulo cargado — decidir si mostrar login o app
+        try {
+          Auth.waitForUser().then(user => {
+            if (!user) {
+              LoginScreen.show();
+            } else {
+              const _lsEl = document.getElementById('login-screen');
+              if (_lsEl) { _lsEl.style.display = 'none'; _lsEl.style.opacity = ''; }
+              LoginScreen.hide();
+              if (typeof _updateUserUI === 'function') {
+                try { _updateUserUI(user); } catch(e) {}
+              }
+            }
+          }).catch(() => { LoginScreen.show(); });
+        } catch(e) {
+          console.warn('[CÓDICE] LoginScreen gate error:', e);
+          try { LoginScreen.show(); } catch {}
+        }
+      }
+
+      // Primera comprobación tras 200ms (dar tiempo al módulo ES)
+      setTimeout(_checkAndShow, 200);
+    })();
 
     /* Render and show screens on next tick to avoid layout thrash */
     setTimeout(() => {
@@ -14798,8 +14808,8 @@ function init(){
         try { renderModules(); } catch(e) { console.error('[CÓDICE] renderModules failed', e); }
         try { showScreen('modules-screen'); } catch(e) { console.error('[CÓDICE] showScreen failed', e); }
       } else {
-        // Sin usuario → asegurar que el login esté visible
-        try { if(typeof LoginScreen!=='undefined') LoginScreen.show(); } catch(e) {}
+        // Sin usuario → asegurar que el login esté visible (ya manejado por polling gate)
+        try { if(typeof LoginScreen!=='undefined' && typeof Auth!=='undefined') LoginScreen.show(); } catch(e) {}
       }
       // Service Worker: solo en web, NO en Capacitor WebView (causa crash)
       const _isCapacitor = window.Capacitor !== undefined || location.protocol === 'capacitor:';

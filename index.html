@@ -16538,6 +16538,30 @@ const LoginScreen = {
 
 window.LoginScreen = LoginScreen;
 
+/* ── Auto-init: arrancar el login en cuanto el módulo carga ── */
+(function _autoInitLogin() {
+  function _tryShow() {
+    // Si ya hay sesión válida en localStorage, no mostrar login
+    try {
+      const _fb = JSON.parse(localStorage.getItem(
+        'firebase:authUser:AIzaSyDLQ3dHp-YV-vObebnEXEssb50UDeheexM:[DEFAULT]'
+      ) || 'null');
+      if (_fb && _fb.uid) return; // hay sesión, el boot la manejará
+    } catch {}
+
+    // Montar y mostrar
+    _lsMount();
+    const el = document.getElementById('login-screen');
+    if (el) el.style.display = 'flex';
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _tryShow);
+  } else {
+    _tryShow();
+  }
+})();
+
 /* ════════════════════════════════════════════════════════════════════
    CÓDICE — CodiceSwManager
 

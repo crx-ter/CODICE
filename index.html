@@ -1328,7 +1328,7 @@ body.font-xl{font-size:19px}
         <!-- Anillo avatar -->
         <div class="profile-pill-ring-wrap">
           <div class="profile-pill-ring">
-            <img id="pill-avatar-img" src="" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:none" onerror="this.style.display='none';const ph=document.getElementById('pill-avatar-ph');if(ph)ph.style.display='flex'"/>
+            <img id="pill-avatar-img" src="" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:none" onload="this.style.display='block';const ph=document.getElementById('pill-avatar-ph');if(ph)ph.style.display='none'" onerror="this.style.display='none';const ph=document.getElementById('pill-avatar-ph');if(ph)ph.style.display='flex'"/>
             <div id="pill-avatar-ph" style="width:100%;height:100%;border-radius:50%;background:linear-gradient(135deg,var(--ac),var(--purple));display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:800;color:#fff">?</div>
           </div>
         </div>
@@ -9228,9 +9228,11 @@ function selectAgent(prompt, hasImage) {
   return AGENTS[winner[0]];
 }
 
-/* ── Override selectAgent con modo orquestador ── */
-const _selectAgentAuto = selectAgent;
-function selectAgent(prompt, hasImage) {
+/* ── Override selectAgent con modo orquestador ──
+   IMPORTANTE: usar variable (no function declaration) para evitar hoisting loop.
+   La función original queda guardada antes del override. ── */
+const _selectAgentOriginal = (function(){ return selectAgent; })();
+selectAgent = function selectAgentOrch(prompt, hasImage) {
   const mode = window._orchMode || 'auto';
   if (mode === 'standard') {
     const pl = (prompt || '').toLowerCase();
@@ -9250,8 +9252,9 @@ function selectAgent(prompt, hasImage) {
     if (/@personal|@chat|@amigo/.test(pl))          return AGENTS.personal;
     return AGENTS.cerebro;
   }
-  return _selectAgentAuto(prompt, hasImage);
-}
+  // Modo 'auto': usar la lógica completa original
+  return _selectAgentOriginal(prompt, hasImage);
+};
 
 
 
@@ -15966,6 +15969,11 @@ function _startLoginMusic() {
     master.connect(ctx.destination);
     _loginMasterGain = master;
 
+    // Resumir contexto si está suspendido (política de autoplay)
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
     // Fade in suave (2 segundos)
     master.gain.setTargetAtTime(0.22, ctx.currentTime, 2);
     _loginMusicPlaying = true;
@@ -16260,9 +16268,24 @@ function _lsMount() {
   document.body.appendChild(d);
   const canvas = document.getElementById('ls-galaxy');
   if (canvas) _lsStopGalaxy = _startGalaxyCanvas(canvas);
-  document.getElementById('login-screen')?.addEventListener('click', () => {
-    if (_lsMusicEnabled && !_loginMusicPlaying) _startLoginMusic();
-  }, { once: true });
+  // Música: iniciar en el primer gesto en cualquier parte del documento
+  if (!window._loginMusicListenerAdded) {
+    window._loginMusicListenerAdded = true;
+    const _startOnGesture = () => {
+      if (!_loginMusicPlaying) {
+        _startLoginMusic();
+        // Si el contexto queda suspendido, reintentamos en el siguiente click
+        setTimeout(() => {
+          if (_loginAudioCtx && _loginAudioCtx.state === 'suspended') {
+            _loginAudioCtx.resume().catch(() => {});
+          }
+        }, 200);
+      }
+    };
+    document.addEventListener('click',      _startOnGesture, { once: true });
+    document.addEventListener('touchstart', _startOnGesture, { once: true });
+    document.addEventListener('keydown',    _startOnGesture, { once: true });
+  }
   _lsRender();
 }
 
@@ -16662,11 +16685,14 @@ Auth.onUserChange(user => {
 /* ══════════════ API PÚBLICA ══════════════ */
 const LoginScreen = {
   show() {
+    if (window._lsShowing) return; // evitar show() múltiple simultáneo
+    window._lsShowing = true;
     _lsMount();
     const el=$('login-screen');
     if(el){ el.style.display='flex'; _lsPhase='home'; _lsRender(); }
   },
   hide() {
+    window._lsShowing = false; // resetear flag para permitir show() futuro
     _stopLoginMusic();
     if(_lsStopGalaxy){ _lsStopGalaxy(); _lsStopGalaxy=null; }
     const el=$('login-screen');

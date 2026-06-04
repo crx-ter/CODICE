@@ -165,7 +165,7 @@ textarea.fi{resize:vertical;min-height:80px;line-height:1.5}
 .profile-pill-inner{display:flex;align-items:center;gap:10px;padding:5px 16px 5px 4px;border-radius:99px;background:linear-gradient(135deg,rgba(12,9,28,.85) 0%,rgba(20,14,48,.9) 100%);border:1.5px solid rgba(124,140,255,.35);box-shadow:0 0 18px rgba(124,140,255,.18),0 0 40px rgba(100,60,255,.12),inset 0 1px 0 rgba(255,255,255,.07);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);transition:all .22s ease;position:relative;overflow:visible}
 .profile-pill-inner::before{content:'';position:absolute;inset:0;border-radius:99px;background:radial-gradient(ellipse at 60% 50%,rgba(124,140,255,.12) 0%,transparent 70%);pointer-events:none;overflow:hidden}
 .profile-pill-inner:hover{border-color:rgba(124,140,255,.6);box-shadow:0 0 24px rgba(124,140,255,.28),0 0 50px rgba(100,60,255,.18),inset 0 1px 0 rgba(255,255,255,.1);transform:translateY(-1px)}
-.profile-pill-ring-wrap{position:relative;width:44px;height:44px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.profile-pill-ring-wrap{position:relative;width:36px;height:36px;flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:50%}
 .profile-pill-ring{width:36px;height:36px;border-radius:50%;padding:2px;background:linear-gradient(135deg,var(--ac),var(--purple),#c084fc);box-shadow:0 0 14px rgba(124,140,255,.4);overflow:hidden;position:relative;flex-shrink:0}
 @keyframes prog-pulse{0%,100%{opacity:1}50%{opacity:.7}}
 .profile-pill-name{font-family:var(--fd);font-size:.9rem;font-weight:700;color:#fff;letter-spacing:.01em;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 0 10px rgba(124,140,255,.5)}
@@ -11541,23 +11541,27 @@ async function loadConvHistory(){
   const uid = window.__codiceUser?.uid;
   if(!uid) return;
   try{
-    const ref = window.doc(window.FIREBASE_DB,'users',uid,'ai','conversations');
-    const snap = await window.getDoc(ref);
+    const db = window.FIREBASE_DB;
+    const _docFn = window.doc || (()=>null);
+    const _getDocFn = window.getDoc || (()=>Promise.resolve({exists:()=>false}));
+    const ref = _docFn(db,'users',uid,'ai','conversations');
+    if (!ref) return;
+    const snap = await _getDocFn(ref);
     if(snap.exists()){
       const data = snap.data();
       const remoteSavedAt = data.updatedAt || 0;
-      /* Sólo aplicar si el remoto es más nuevo que el local */
       const localMax = Object.values(_aiConvStore).reduce((m,c)=>Math.max(m,c.savedAt||0),0);
       if(remoteSavedAt > localMax){
         const remoteConvs = data.convs || [];
         _aiConvStore = {};
         remoteConvs.forEach(c=>{ _aiConvStore[c.id]=c; });
-        /* Actualizar localStorage con los datos de la nube */
         try{ localStorage.setItem('cdv10_convs',JSON.stringify(remoteConvs)); }catch{}
-        console.log('[AI] Historial de conversaciones restaurado desde Firestore.');
       }
     }
-  }catch(e){ console.warn('[AI] loadConvHistory desde Firestore falló:',e.message); }
+  }catch(e){
+    // Permisos insuficientes o sin conexión — usar solo localStorage (degradado gracioso)
+    if(e.code !== 'permission-denied') console.warn('[AI] loadConvHistory:',e.code||e.message);
+  }
 }
 function toggleHistoryPanel(){
   const panel = document.getElementById('ai-history-panel');
@@ -15945,25 +15949,160 @@ window.Auth = Auth;
 // 3. LOGIN SCREEN — Galaxy canvas + flujo email profesional
 // ══════════════════════════════════════════════════════════════
 
-/* ── Música de login (igual que antes) ── */
-let _loginAudioCtx = null, _loginMusicNodes = [], _loginMusicPlaying = false;
+/* ── Música atmosférica espacial — aurora boreal + piano sutil ──
+   Loop infinito. Se inicia con el primer gesto del usuario (requerido por
+   las políticas de autoplay del navegador). Sin botón, siempre activa.    ── */
+let _loginAudioCtx = null, _loginMusicPlaying = false, _loginMasterGain = null;
+
 function _startLoginMusic() {
   if (_loginMusicPlaying) return;
   try {
-    _loginAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const master = _loginAudioCtx.createGain(); master.gain.value = 0.07; master.connect(_loginAudioCtx.destination);
-    [[220,.8],[330,.5],[440,.3],[550,.2]].forEach(([f,g],i) => {
-      const o=_loginAudioCtx.createOscillator(), gn=_loginAudioCtx.createGain();
-      o.type='sine'; o.frequency.value=f; gn.gain.value=g;
-      o.connect(gn); gn.connect(master); o.start(i*.08);
-      _loginMusicNodes.push(o,gn);
-    });
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    _loginAudioCtx = new AC();
+    const ctx = _loginAudioCtx;
+    const master = ctx.createGain();
+    master.gain.value = 0;
+    master.connect(ctx.destination);
+    _loginMasterGain = master;
+
+    // Fade in suave (2 segundos)
+    master.gain.setTargetAtTime(0.22, ctx.currentTime, 2);
     _loginMusicPlaying = true;
-  } catch {}
+
+    // ── Capa 1: Pad de aurora (drones armónicos muy lentos) ──
+    const auroraFreqs = [55, 82.4, 110, 164.8, 220];
+    auroraFreqs.forEach((freq, i) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const lfo  = ctx.createOscillator();
+      const lfoG = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+
+      // Vibrato muy lento y profundo (aurora)
+      lfo.type = 'sine';
+      lfo.frequency.value = 0.03 + i * 0.008;
+      lfoG.gain.value = freq * 0.004;
+      lfo.connect(lfoG);
+      lfoG.connect(osc.frequency);
+
+      gain.gain.value = 0;
+      const targetGain = [0.18, 0.12, 0.09, 0.07, 0.05][i];
+      gain.gain.setTargetAtTime(targetGain, ctx.currentTime + i * 0.8, 3);
+
+      osc.connect(gain);
+      gain.connect(master);
+      lfo.start();
+      osc.start();
+    });
+
+    // ── Capa 2: Ruido de espacio filtrado (viento cósmico) ──
+    const bufLen = ctx.sampleRate * 4;
+    const buffer = ctx.createBuffer(1, bufLen, ctx.sampleRate);
+    const data   = buffer.getChannelData(0);
+    for (let i = 0; i < bufLen; i++) data[i] = (Math.random() * 2 - 1) * 0.3;
+    const noise  = ctx.createBufferSource();
+    noise.buffer = buffer;
+    noise.loop   = true;
+    const filter = ctx.createBiquadFilter();
+    filter.type  = 'bandpass';
+    filter.frequency.value = 180;
+    filter.Q.value = 0.4;
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.value = 0.028;
+    noise.connect(filter);
+    filter.connect(noiseGain);
+    noiseGain.connect(master);
+    noise.start();
+
+    // ── Capa 3: Piano sutil — notas tututu espaciadas ──
+    const pianoNotes = [
+      { freq: 261.63, t: 4.0,  dur: 2.8 },  // C4
+      { freq: 293.66, t: 6.5,  dur: 2.4 },  // D4
+      { freq: 329.63, t: 9.0,  dur: 3.0 },  // E4
+      { freq: 261.63, t: 12.0, dur: 2.6 },  // C4
+      { freq: 246.94, t: 14.5, dur: 3.2 },  // B3
+      { freq: 220.00, t: 17.5, dur: 2.8 },  // A3
+      { freq: 261.63, t: 20.5, dur: 2.6 },  // C4
+      { freq: 293.66, t: 23.0, dur: 2.4 },  // D4
+      { freq: 329.63, t: 25.5, dur: 3.0 },  // E4
+      { freq: 349.23, t: 28.5, dur: 2.8 },  // F4
+      { freq: 329.63, t: 31.0, dur: 3.2 },  // E4
+      { freq: 261.63, t: 34.5, dur: 4.0 },  // C4
+    ];
+    const LOOP_DUR = 38; // duración total del loop en segundos
+
+    function _schedulePiano(startOffset) {
+      pianoNotes.forEach(({ freq, t, dur }) => {
+        const osc  = ctx.createOscillator();
+        const env  = ctx.createGain();
+        const when = ctx.currentTime + startOffset + t;
+
+        osc.type = 'triangle';
+        osc.frequency.value = freq;
+
+        // Envelope: attack 80ms, decay lento, muy suave
+        env.gain.setValueAtTime(0, when);
+        env.gain.linearRampToValueAtTime(0.055, when + 0.08);
+        env.gain.exponentialRampToValueAtTime(0.001, when + dur);
+
+        osc.connect(env);
+        env.connect(master);
+        osc.start(when);
+        osc.stop(when + dur + 0.1);
+      });
+    }
+
+    // Primer ciclo (comienza a los 3s para que la aurora establezca el mood)
+    _schedulePiano(3);
+    // Loop: re-programar cada LOOP_DUR segundos
+    function _loopPiano(offset) {
+      setTimeout(() => {
+        if (!_loginMusicPlaying) return;
+        _schedulePiano(0);
+        _loopPiano(LOOP_DUR * 1000);
+      }, offset);
+    }
+    _loopPiano((3 + LOOP_DUR) * 1000);
+
+    // ── Capa 4: Reverb de convolucion (simula espacio abierto) ──
+    try {
+      const revLen = ctx.sampleRate * 3;
+      const revBuf = ctx.createBuffer(2, revLen, ctx.sampleRate);
+      for (let ch = 0; ch < 2; ch++) {
+        const d = revBuf.getChannelData(ch);
+        for (let i = 0; i < revLen; i++)
+          d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / revLen, 2.5);
+      }
+      const reverb = ctx.createConvolver();
+      reverb.buffer = revBuf;
+      const wetGain = ctx.createGain(); wetGain.gain.value = 0.35;
+      const dryGain = ctx.createGain(); dryGain.gain.value = 0.65;
+      // Re-enrutar master a través de reverb
+      master.disconnect();
+      master.connect(dryGain); dryGain.connect(ctx.destination);
+      master.connect(reverb);  reverb.connect(wetGain); wetGain.connect(ctx.destination);
+    } catch {} // reverb es opcional
+
+  } catch (e) { console.warn('[Music]', e); }
 }
+
 function _stopLoginMusic() {
-  try { _loginMusicNodes.forEach(n=>{try{n.stop?.();}catch{}}); _loginMusicNodes=[]; _loginAudioCtx?.close(); } catch {}
-  _loginAudioCtx = null; _loginMusicPlaying = false;
+  if (!_loginAudioCtx) return;
+  try {
+    // Fade out antes de cerrar
+    if (_loginMasterGain) {
+      _loginMasterGain.gain.setTargetAtTime(0, _loginAudioCtx.currentTime, 0.8);
+    }
+    setTimeout(() => {
+      try { _loginAudioCtx?.close(); } catch {}
+      _loginAudioCtx = null; _loginMasterGain = null; _loginMusicPlaying = false;
+    }, 1200);
+  } catch {
+    _loginAudioCtx = null; _loginMusicPlaying = false;
+  }
 }
 
 /* ── Galaxy canvas ── */
@@ -16034,7 +16173,7 @@ let _lsEmailMode = 'verify'; // verify | reset
 let _lsPendingEmail = '';
 let _lsResendTimer = null, _lsResendSecs = 0;
 let _lsStopGalaxy = null;
-let _lsMusicEnabled = true;
+
 
 /* ── HTML base ── */
 const _LS_HTML = `
@@ -16103,8 +16242,7 @@ const _LS_HTML = `
   /* Mail icon */
   .ls-mail-ico{width:68px;height:68px;border-radius:20px;background:rgba(110,70,255,.09);border:1px solid rgba(120,80,255,.22);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;box-shadow:0 0 36px rgba(110,70,255,.2)}
   /* Music btn */
-  .ls-music{position:absolute;top:14px;right:14px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:99px;padding:6px 12px;font-size:.7rem;color:var(--t2);cursor:pointer;z-index:10;transition:all 180ms;font-family:var(--fb)}
-  .ls-music:hover{background:rgba(255,255,255,.1);color:var(--t0)}
+  /* música siempre activa — sin botón */
   /* Spinner pantalla */
   .ls-spin{width:34px;height:34px;border-radius:50%;border:2px solid rgba(120,80,255,.2);border-top-color:#9060ff;animation:spin .8s linear infinite;margin:0 auto}
   @keyframes spin{to{transform:rotate(360deg)}}
@@ -16217,7 +16355,7 @@ function _lsRender() {
   if (_lsPhase === 'home') {
     wrap.innerHTML = `
     <div class="ls-card" style="position:relative">
-      <button class="ls-music" id="ls-music-btn">${_lsMusicEnabled?'🔊':'🔇'}</button>
+
       <div class="ls-ring">
         <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
           <rect x="6"  y="6"  width="10" height="10" rx="2" fill="var(--ac)"     opacity=".9"/>
@@ -16257,11 +16395,7 @@ function _lsRender() {
       </p>
     </div>`;
 
-    $('ls-music-btn')?.addEventListener('click', e=>{
-      e.stopPropagation(); _lsMusicEnabled=!_lsMusicEnabled;
-      if(_lsMusicEnabled) _startLoginMusic(); else _stopLoginMusic();
-      _lsRender();
-    });
+
     $('ls-go-login')?.addEventListener('click', ()=>{ _lsPhase='email-login'; _lsRender(); });
     $('ls-go-register')?.addEventListener('click', ()=>{ _lsPhase='register'; _lsRender(); });
     wrap.querySelectorAll('.ls-acct').forEach(btn=>{
@@ -16550,25 +16684,13 @@ window.LoginScreen = LoginScreen;
 
 /* ── Auto-init: arrancar el login en cuanto el módulo carga ── */
 (function _autoInitLogin() {
-  function _tryShow() {
-    // Si ya hay sesión válida en localStorage, no mostrar login
-    try {
-      const _fb = JSON.parse(localStorage.getItem(
-        'firebase:authUser:AIzaSyDLQ3dHp-YV-vObebnEXEssb50UDeheexM:[DEFAULT]'
-      ) || 'null');
-      if (_fb && _fb.uid) return; // hay sesión, el boot la manejará
-    } catch {}
-
-    // Montar y mostrar
-    _lsMount();
-    const el = document.getElementById('login-screen');
-    if (el) el.style.display = 'flex';
-  }
-
+  // Solo monta el DOM del login — NO lo muestra.
+  // El polling gate del boot decide si mostrarlo.
+  function _tryMount() { _lsMount(); }
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _tryShow);
+    document.addEventListener('DOMContentLoaded', _tryMount);
   } else {
-    _tryShow();
+    _tryMount();
   }
 })();
 
